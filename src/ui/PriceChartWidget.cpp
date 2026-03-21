@@ -44,6 +44,7 @@ void PriceChartWidget::setupUi() {
 
     connect(m_refreshBtn, &QPushButton::clicked, this, &PriceChartWidget::refreshChart);
     connect(m_itemCombo, &QComboBox::currentIndexChanged, this, &PriceChartWidget::refreshChart);
+    connect(m_daysSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &PriceChartWidget::refreshChart);
 
     populateItemCombo();
 }
