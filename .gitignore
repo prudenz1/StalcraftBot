@@ -1,0 +1,40 @@
+# Build
+build/
+cmake-build-*/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+CMakeSettings.json
+
+# Qt
+*_autogen/
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Compiled
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Logs
+*.log
+
+# Secrets
+Secrete_token.txt
+
+# Internal docs
+Explain.md
+Формулировка формул/

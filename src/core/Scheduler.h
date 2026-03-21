@@ -1,0 +1,49 @@
+#pragma once
+
+#include <QObject>
+#include <QTimer>
+#include <QQueue>
+#include <QVector>
+#include "models/Lot.h"
+
+class Config;
+class Database;
+class ApiClient;
+class PriceAnalyzer;
+class DealDetector;
+
+class Scheduler : public QObject {
+    Q_OBJECT
+public:
+    explicit Scheduler(Config* config, Database* db, ApiClient* api,
+                       PriceAnalyzer* analyzer, DealDetector* detector,
+                       QObject* parent = nullptr);
+
+    void start();
+    void stop();
+    bool isRunning() const;
+
+signals:
+    void pollStarted();
+    void pollFinished();
+    void pollItemStarted(const QString& itemId);
+    void pollItemFinished(const QString& itemId);
+
+private slots:
+    void onPollTimer();
+    void onLotsFetched(const QString& itemId, const QVector<Lot>& lots, int total);
+
+private:
+    void processNextItem();
+    void aggregateAndAnalyze(const QString& itemId, const QVector<Lot>& lots);
+
+    Config* m_config;
+    Database* m_db;
+    ApiClient* m_api;
+    PriceAnalyzer* m_analyzer;
+    DealDetector* m_detector;
+
+    QTimer* m_pollTimer;
+    QQueue<QString> m_itemQueue;
+    bool m_polling = false;
+};
