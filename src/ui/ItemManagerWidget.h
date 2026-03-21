@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QVector>
+#include <QDateTime>
 
 #include "core/ApiClient.h"
 
@@ -42,6 +43,9 @@ private:
 
     QMap<QString, QVector<PriceHistoryEntry>> m_pendingHistory;
     QMap<QString, int> m_historyTotal;
+    /// Счётчик повторов запроса той же страницы при детекте дубликата (глюки API).
+    QMap<QString, int> m_historyDuplicateRetries;
+    QMap<QString, QDateTime> m_historyLastPageOldest;
 
     QPushButton* m_downloadBtn = nullptr;
     QProgressBar* m_progressBar = nullptr;

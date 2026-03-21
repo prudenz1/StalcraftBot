@@ -12,6 +12,51 @@
 #include <cmath>
 #include <numeric>
 
+#include <QDateTime>
+#include <QTimer>
+
+namespace {
+
+static const int HISTORY_PAGE_SIZE = 200;
+static constexpr int kPaginationOverlapWarnSec = 120;
+static constexpr int kDuplicatePrefixRows = 5;
+static constexpr int kMaxDuplicateRetries = 3;
+static constexpr int kDuplicateRetryDelayMs = 400;
+
+static bool sameTimePrice(const PriceHistoryEntry& a, const PriceHistoryEntry& b) {
+    return a.price == b.price && a.time.isValid() && b.time.isValid()
+        && a.time.toSecsSinceEpoch() == b.time.toSecsSinceEpoch();
+}
+
+/// Первые k строк совпадают с началом уже загруженной первой страницы — ответ снова «как offset=0».
+static bool isDuplicateRepeatOfFirstPage(const QVector<PriceHistoryEntry>& newPage,
+                                         const QVector<PriceHistoryEntry>& pending) {
+    if (pending.size() < HISTORY_PAGE_SIZE || newPage.size() < kDuplicatePrefixRows)
+        return false;
+    for (int i = 0; i < kDuplicatePrefixRows; ++i) {
+        if (!sameTimePrice(newPage[i], pending[i])) return false;
+    }
+    return true;
+}
+
+static void historyPageMinMax(const QVector<PriceHistoryEntry>& entries,
+                              QDateTime* outMin, QDateTime* outMax) {
+    *outMin = *outMax = QDateTime();
+    bool any = false;
+    for (const auto& e : entries) {
+        if (!e.time.isValid()) continue;
+        if (!any) {
+            *outMin = *outMax = e.time;
+            any = true;
+        } else {
+            if (e.time < *outMin) *outMin = e.time;
+            if (e.time > *outMax) *outMax = e.time;
+        }
+    }
+}
+
+} // namespace
+
 ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
@@ -194,11 +239,11 @@ void ItemManagerWidget::refreshTrackedList() {
 
 // --- Price history import ---
 
-static const int HISTORY_PAGE_SIZE = 200;
-
 void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId) {
     m_pendingHistory[itemId].clear();
     m_historyTotal[itemId] = 0;
+    m_historyDuplicateRetries.remove(itemId);
+    m_historyLastPageOldest.remove(itemId);
 
     m_historyStatus->setVisible(true);
     m_historyStatus->setText(QString::fromUtf8("Загрузка истории цен для %1...").arg(itemId));
@@ -219,35 +264,107 @@ void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
                                               int total) {
     if (!m_pendingHistory.contains(itemId)) return;
 
+    const int pageOffset = m_pendingHistory[itemId].size();
+
     m_historyTotal[itemId] = total;
-    m_pendingHistory[itemId].append(entries);
+
+    QDateTime pageMin, pageMax;
+    historyPageMinMax(entries, &pageMin, &pageMax);
+
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    for (const auto& e : entries) {
+        if (e.time.isValid() && e.time > nowUtc.addDays(1)) {
+            LOG_WARN("История {}: сделка с датой в будущем ({}) — возможна ошибка API/часового пояса",
+                     itemId.toStdString(), e.time.toString(Qt::ISODate).toStdString());
+            break;
+        }
+    }
+
+    bool rejectDuplicatePage = false;
+    if (pageOffset > 0 && !entries.isEmpty()
+        && isDuplicateRepeatOfFirstPage(entries, m_pendingHistory[itemId])) {
+        int n = m_historyDuplicateRetries.value(itemId, 0);
+        if (n < kMaxDuplicateRetries) {
+            m_historyDuplicateRetries[itemId] = n + 1;
+            LOG_WARN(
+                "История {}: offset={} — повтор первой страницы (первые {} сделок); "
+                "повтор запроса {}/{} через {} мс.",
+                itemId.toStdString(), pageOffset, kDuplicatePrefixRows, n + 1, kMaxDuplicateRetries,
+                kDuplicateRetryDelayMs);
+            QTimer::singleShot(kDuplicateRetryDelayMs, this, [this, itemId, pageOffset]() {
+                if (m_pendingHistory.contains(itemId))
+                    fetchHistoryPage(itemId, pageOffset);
+            });
+            return;
+        }
+        LOG_WARN(
+            "История {}: offset={} — после {} повторов всё ещё дубликат первой страницы; загрузка остановлена.",
+            itemId.toStdString(), pageOffset, kMaxDuplicateRetries);
+        rejectDuplicatePage = true;
+    } else if (pageOffset > 0) {
+        m_historyDuplicateRetries[itemId] = 0;
+    }
+    if (!rejectDuplicatePage && pageOffset > 0 && pageMin.isValid() && pageMax.isValid()
+        && m_historyLastPageOldest.contains(itemId)
+        && pageMax > m_historyLastPageOldest[itemId].addSecs(kPaginationOverlapWarnSec)) {
+        LOG_WARN(
+            "История {}: offset={} — «новейшая» сделка на странице ({}) сильно новее самой старой "
+            "на предыдущей ({}), пагинация может быть неконсистентной.",
+            itemId.toStdString(),
+            pageOffset,
+            pageMax.toString(Qt::ISODate).toStdString(),
+            m_historyLastPageOldest[itemId].toString(Qt::ISODate).toStdString());
+    }
+
+    if (!rejectDuplicatePage) {
+        m_pendingHistory[itemId].append(entries);
+        if (pageMin.isValid()) {
+            m_historyLastPageOldest[itemId] = pageMin;
+        }
+    }
 
     int fetched = m_pendingHistory[itemId].size();
+    QString totalLabel = (total > 0) ? QString::number(total)
+                                     : QString::fromUtf8("—");
     m_historyStatus->setText(
         QString::fromUtf8("История %1: %2 / %3 записей...")
-            .arg(itemId).arg(fetched).arg(total));
+            .arg(itemId).arg(fetched).arg(totalLabel));
 
-    if (fetched < total && !entries.isEmpty()) {
+    // total иногда отражает не всю историю (например только недавние сделки). Старое условие
+    // fetched < total обрывало загрузку при полной странице, хотя дальше по offset данные есть.
+    // При полной странице всегда запрашиваем следующую; конец — пустой ответ или неполная
+    // страница при fetched >= total (лишний пустой запрос при «ровном» total допустим).
+    bool fetchMore = false;
+    if (!rejectDuplicatePage && !entries.isEmpty()) {
+        if (entries.size() >= HISTORY_PAGE_SIZE) {
+            fetchMore = true;
+        } else if (total > 0 && fetched < total) {
+            fetchMore = true;
+        }
+    }
+
+    if (fetchMore) {
         fetchHistoryPage(itemId, fetched);
     } else {
         LOG_INFO("Price history complete for {}: {} entries", itemId.toStdString(), fetched);
         storeHistoryEntries(itemId, m_pendingHistory[itemId]);
         m_pendingHistory.remove(itemId);
         m_historyTotal.remove(itemId);
+        m_historyDuplicateRetries.remove(itemId);
+        m_historyLastPageOldest.remove(itemId);
         m_historyStatus->setText(
             QString::fromUtf8("История %1 загружена: %2 записей").arg(itemId).arg(fetched));
     }
 }
 
-void ItemManagerWidget::storeHistoryEntries(const QString& itemId,
-                                            const QVector<PriceHistoryEntry>& allEntries) {
+void ItemManagerWidget::storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries) {
     if (allEntries.isEmpty()) return;
 
     // Group entries by hour for aggregated snapshots
     QMap<qint64, QVector<qint64>> hourBuckets;
 
     for (const auto& entry : allEntries) {
-        if (entry.price <= 0) continue;
+        if (entry.price <= 0 || !entry.time.isValid()) continue;
         QDateTime hourStart = entry.time;
         hourStart.setTime(QTime(hourStart.time().hour(), 0, 0));
         qint64 key = hourStart.toSecsSinceEpoch();

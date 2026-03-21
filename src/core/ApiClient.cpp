@@ -106,9 +106,12 @@ void ApiClient::handleLotsReply(QNetworkReply* reply, const QString& itemId) {
     emit lotsFetched(itemId, lots, total);
 }
 
+// Обработка ответа от API на запрос истории цен (GET /{region}/auction/{itemId}/history).
+// Парсит JSON с завершёнными сделками и отправляет результат через сигнал priceHistoryFetched.
 void ApiClient::handlePriceHistoryReply(QNetworkReply* reply, const QString& itemId) {
-    reply->deleteLater();
+    reply->deleteLater(); // Qt освободит объект reply после выхода из event loop
 
+    // Проверка HTTP-ошибок (таймаут, 404, 500 и т.д.)
     if (reply->error() != QNetworkReply::NoError) {
         QString err = reply->errorString();
         LOG_ERROR("API error fetching price history for {}: {}",
@@ -117,27 +120,41 @@ void ApiClient::handlePriceHistoryReply(QNetworkReply* reply, const QString& ite
         return;
     }
 
+    // Парсинг JSON-ответа. Формат API:
+    // { "total": 43600, "prices": [ { "amount": 1, "price": 50000, "time": "...", "additional": "..." }, ... ] }
     QByteArray data = reply->readAll();
     QJsonDocument doc = QJsonDocument::fromJson(data);
     QJsonObject root = doc.object();
 
-    int total = root["total"].toInt();
-    QJsonArray pricesArr = root["prices"].toArray();
+    int total = root["total"].toInt();         // Общее кол-во записей на сервере (для пагинации)
+    QJsonArray pricesArr = root["prices"].toArray(); // Массив сделок на текущей странице
 
     QVector<PriceHistoryEntry> entries;
     entries.reserve(pricesArr.size());
 
+    // Преобразование каждого JSON-объекта в структуру PriceHistoryEntry
     for (const auto& val : pricesArr) {
         QJsonObject obj = val.toObject();
         PriceHistoryEntry entry;
-        entry.amount = obj["amount"].toVariant().toLongLong();
-        entry.price = obj["price"].toVariant().toLongLong();
-        entry.time = QDateTime::fromString(obj["time"].toString(), Qt::ISODate);
-        entry.additional = obj["additional"].toString();
+        entry.amount = obj["amount"].toVariant().toLongLong();  // Количество предметов в сделке
+        entry.price = obj["price"].toVariant().toLongLong();    // Цена продажи
+        QString timeStr = obj["time"].toString();
+        entry.time = QDateTime::fromString(timeStr, Qt::ISODate);
+        if (!entry.time.isValid()) {
+            entry.time = QDateTime::fromString(timeStr, Qt::ISODateWithMs);
+        }
+        QJsonValue addVal = obj["additional"];
+        if (addVal.isObject()) {
+            entry.additional = QString::fromUtf8(
+                QJsonDocument(addVal.toObject()).toJson(QJsonDocument::Compact));
+        } else {
+            entry.additional = addVal.toString();
+        }
         entries.append(entry);
     }
 
     LOG_INFO("Fetched {} price history entries for item {}",
              entries.size(), itemId.toStdString());
+    // Сигнал подхватывает ItemManagerWidget::onHistoryPageReceived для пагинации и сохранения в БД
     emit priceHistoryFetched(itemId, entries, total);
 }

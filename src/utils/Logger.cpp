@@ -1,8 +1,19 @@
 #include "Logger.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 std::shared_ptr<spdlog::logger> Logger::s_logger;
 
 void Logger::init(const std::string& logFile) {
+#ifdef _WIN32
+    // Иначе UTF-8 из логов отображается в консоли как «╨Ш╤Б╤В╨╛╤А╨╕╤П...»
+    SetConsoleOutputCP(65001);
+    SetConsoleCP(65001);
+#endif
+
     auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     consoleSink->set_level(spdlog::level::info);
 
