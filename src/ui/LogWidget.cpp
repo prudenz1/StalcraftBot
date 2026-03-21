@@ -6,6 +6,10 @@
 #include <QHeaderView>
 #include <QLabel>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 LogWidget::LogWidget(Database* db, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
@@ -73,6 +77,12 @@ void LogWidget::addAlert(const Alert& alert) {
 
     m_table->setItem(row, 3, new QTableWidgetItem(QString::number(alert.rating, 'f', 2)));
     m_table->setItem(row, 4, new QTableWidgetItem(alert.message));
+
+#ifdef Q_OS_WIN
+    if (alert.type == AlertType::Buy) {
+        MessageBeep(MB_ICONEXCLAMATION);
+    }
+#endif
 }
 
 void LogWidget::refresh() {
