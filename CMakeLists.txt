@@ -73,6 +73,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     ${PostgreSQL_LIBRARIES}
+    $<$<PLATFORM_ID:Windows>:winmm>
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE

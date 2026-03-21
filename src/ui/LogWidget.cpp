@@ -8,7 +8,11 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <mmsystem.h>
 #endif
+
+#include <QCoreApplication>
+#include <QFile>
 
 LogWidget::LogWidget(Database* db, QWidget* parent)
     : QWidget(parent)
@@ -80,7 +84,12 @@ void LogWidget::addAlert(const Alert& alert) {
 
 #ifdef Q_OS_WIN
     if (alert.type == AlertType::Buy) {
-        MessageBeep(MB_ICONEXCLAMATION);
+        QString soundPath = QCoreApplication::applicationDirPath() + "/buy_alert.wav";
+        if (QFile::exists(soundPath)) {
+            PlaySound(reinterpret_cast<LPCWSTR>(soundPath.utf16()), nullptr, SND_FILENAME | SND_ASYNC);
+        } else {
+            MessageBeep(MB_ICONEXCLAMATION);
+        }
     }
 #endif
 }
