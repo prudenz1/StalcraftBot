@@ -14,11 +14,13 @@ public:
 
     QString apiBaseUrl() const;
 
-    QString clientId() const;
-    void setClientId(const QString& id);
-
-    QString clientSecret() const;
-    void setClientSecret(const QString& secret);
+    /** Токен для Authorization: Bearer (или из переменной окружения STALCRAFT_API_BEARER). */
+    QString bearerToken() const;
+    /** @return false если на Windows не удалось зашифровать (DPAPI). */
+    bool setBearerToken(const QString& token);
+    void clearBearerToken();
+    /** Есть ли сохранённый в настройках токен (без учёта env). */
+    bool hasPersistedBearerToken() const;
 
     int pollIntervalSec() const;
     void setPollIntervalSec(int seconds);
@@ -56,5 +58,7 @@ signals:
     void configChanged();
 
 private:
+    QString loadPersistedBearerToken() const;
+
     QSettings m_settings;
 };

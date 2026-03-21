@@ -1,5 +1,51 @@
 #include "Config.h"
 
+#include <QByteArray>
+#include <QDebug>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <wincrypt.h>
+#endif
+
+namespace {
+
+#ifdef Q_OS_WIN
+QByteArray protectDpapi(const QByteArray& plain) {
+    if (plain.isEmpty()) {
+        return {};
+    }
+    DATA_BLOB in{};
+    in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plain.constData()));
+    in.cbData = static_cast<DWORD>(plain.size());
+    DATA_BLOB out{};
+    if (!CryptProtectData(&in, L"StalcraftBot API", nullptr, nullptr, nullptr, 0, &out)) {
+        return {};
+    }
+    QByteArray result(reinterpret_cast<const char*>(out.pbData), static_cast<int>(out.cbData));
+    LocalFree(out.pbData);
+    return result;
+}
+
+QByteArray unprotectDpapi(const QByteArray& blob) {
+    if (blob.isEmpty()) {
+        return {};
+    }
+    DATA_BLOB in{};
+    in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(blob.constData()));
+    in.cbData = static_cast<DWORD>(blob.size());
+    DATA_BLOB out{};
+    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, 0, &out)) {
+        return {};
+    }
+    QByteArray result(reinterpret_cast<const char*>(out.pbData), static_cast<int>(out.cbData));
+    LocalFree(out.pbData);
+    return result;
+}
+#endif
+
+} // namespace
+
 Config::Config(QObject* parent)
     : QObject(parent)
     , m_settings("StalcraftBot", "StalcraftBot")
@@ -19,22 +65,60 @@ QString Config::apiBaseUrl() const {
     return m_settings.value("api/baseUrl", "https://eapi.stalcraft.net").toString();
 }
 
-QString Config::clientId() const {
-    return m_settings.value("api/clientId", "").toString();
+QString Config::bearerToken() const {
+    const QByteArray env = qgetenv("STALCRAFT_API_BEARER");
+    if (!env.isEmpty()) {
+        return QString::fromUtf8(env);
+    }
+    return loadPersistedBearerToken();
 }
 
-void Config::setClientId(const QString& id) {
-    m_settings.setValue("api/clientId", id);
+QString Config::loadPersistedBearerToken() const {
+#ifdef Q_OS_WIN
+    const QByteArray blob = QByteArray::fromBase64(
+        m_settings.value("api/bearerTokenDpapi").toByteArray());
+    const QByteArray plain = unprotectDpapi(blob);
+    return QString::fromUtf8(plain);
+#else
+    return m_settings.value("api/bearerTokenPlain", "").toString();
+#endif
+}
+
+bool Config::setBearerToken(const QString& token) {
+    if (token.isEmpty()) {
+        clearBearerToken();
+        return true;
+    }
+#ifdef Q_OS_WIN
+    const QByteArray enc = protectDpapi(token.toUtf8());
+    if (enc.isEmpty()) {
+        qWarning() << "CryptProtectData failed; bearer token not saved";
+        return false;
+    }
+    m_settings.setValue("api/bearerTokenDpapi", enc.toBase64());
+#else
+    m_settings.setValue("api/bearerTokenPlain", token);
+#endif
+    emit configChanged();
+    return true;
+}
+
+void Config::clearBearerToken() {
+#ifdef Q_OS_WIN
+    m_settings.remove("api/bearerTokenDpapi");
+#else
+    m_settings.remove("api/bearerTokenPlain");
+#endif
     emit configChanged();
 }
 
-QString Config::clientSecret() const {
-    return m_settings.value("api/clientSecret", "").toString();
-}
-
-void Config::setClientSecret(const QString& secret) {
-    m_settings.setValue("api/clientSecret", secret);
-    emit configChanged();
+bool Config::hasPersistedBearerToken() const {
+#ifdef Q_OS_WIN
+    return m_settings.contains("api/bearerTokenDpapi")
+        && !m_settings.value("api/bearerTokenDpapi").toByteArray().isEmpty();
+#else
+    return !m_settings.value("api/bearerTokenPlain", "").toString().isEmpty();
+#endif
 }
 
 int Config::pollIntervalSec() const {

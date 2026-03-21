@@ -37,7 +37,7 @@ CREATE DATABASE stalcraft_bot;
 
 1. Запустите приложение
 2. Перейдите на вкладку **Настройки**
-3. Укажите Client-Id и Client-Secret для Stalcraft API
+3. Укажите Bearer access_token для Stalcraft API (сохраняется через DPAPI в профиле Windows; альтернатива — переменная окружения `STALCRAFT_API_BEARER`)
 4. Настройте подключение к PostgreSQL
 5. Перейдите на вкладку **Предметы** и добавьте предметы для отслеживания
 

@@ -26,8 +26,8 @@ private:
 
     // API
     QComboBox* m_regionCombo = nullptr;
-    QLineEdit* m_clientIdEdit = nullptr;
-    QLineEdit* m_clientSecretEdit = nullptr;
+    QLineEdit* m_bearerTokenEdit = nullptr;
+    QPushButton* m_clearBearerBtn = nullptr;
 
     // Scheduler
     QSpinBox* m_pollIntervalSpin = nullptr;

@@ -74,6 +74,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     nlohmann_json::nlohmann_json
     ${PostgreSQL_LIBRARIES}
     $<$<PLATFORM_ID:Windows>:winmm>
+    $<$<PLATFORM_ID:Windows>:crypt32>
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE

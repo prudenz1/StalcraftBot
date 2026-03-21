@@ -21,8 +21,10 @@ QNetworkRequest ApiClient::makeRequest(const QString& path, const QUrlQuery& par
     }
 
     QNetworkRequest req(url);
-    req.setRawHeader("Client-Id", m_config->clientId().toUtf8());
-    req.setRawHeader("Client-Secret", m_config->clientSecret().toUtf8());
+    const QString tok = m_config->bearerToken();
+    if (!tok.isEmpty()) {
+        req.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + tok.toUtf8());
+    }
     req.setRawHeader("Content-Type", "application/json");
     return req;
 }
@@ -56,6 +58,8 @@ void ApiClient::fetchPriceHistory(const QString& itemId, int offset, int limit) 
     QUrlQuery params;
     params.addQueryItem("offset", QString::number(offset));
     params.addQueryItem("limit", QString::number(limit));
+    // Как в открытых парсерах (напр. stalcraft-auction-parser): может влиять на выдачу/пагинацию.
+    params.addQueryItem("additional", QStringLiteral("true"));
 
     QNetworkRequest req = makeRequest(path, params);
     QNetworkReply* reply = m_nam->get(req);

@@ -25,12 +25,19 @@ void SettingsWidget::setupUi() {
     m_regionCombo->addItems({"RU", "EU", "NA", "SEA"});
     apiLayout->addRow(QString::fromUtf8("Регион:"), m_regionCombo);
 
-    m_clientIdEdit = new QLineEdit(this);
-    apiLayout->addRow("Client-Id:", m_clientIdEdit);
-
-    m_clientSecretEdit = new QLineEdit(this);
-    m_clientSecretEdit->setEchoMode(QLineEdit::Password);
-    apiLayout->addRow("Client-Secret:", m_clientSecretEdit);
+    m_bearerTokenEdit = new QLineEdit(this);
+    m_bearerTokenEdit->setEchoMode(QLineEdit::Password);
+    m_bearerTokenEdit->setPlaceholderText(
+        QString::fromUtf8("Вставьте access_token (Bearer)"));
+    auto* bearerRow = new QHBoxLayout();
+    bearerRow->addWidget(m_bearerTokenEdit, 1);
+    m_clearBearerBtn = new QPushButton(QString::fromUtf8("Сбросить"), this);
+    m_clearBearerBtn->setToolTip(
+        QString::fromUtf8("Удалить сохранённый токен из защищённого хранилища"));
+    bearerRow->addWidget(m_clearBearerBtn);
+    auto* bearerWrap = new QWidget(this);
+    bearerWrap->setLayout(bearerRow);
+    apiLayout->addRow(QString::fromUtf8("Bearer-токен:"), bearerWrap);
 
     mainLayout->addWidget(apiGroup);
 
@@ -112,12 +119,22 @@ void SettingsWidget::setupUi() {
     mainLayout->addStretch();
 
     connect(m_saveBtn, &QPushButton::clicked, this, &SettingsWidget::saveToConfig);
+    connect(m_clearBearerBtn, &QPushButton::clicked, this, [this]() {
+        m_config->clearBearerToken();
+        loadFromConfig();
+    });
 }
 
 void SettingsWidget::loadFromConfig() {
     m_regionCombo->setCurrentText(m_config->region());
-    m_clientIdEdit->setText(m_config->clientId());
-    m_clientSecretEdit->setText(m_config->clientSecret());
+    m_bearerTokenEdit->clear();
+    if (m_config->hasPersistedBearerToken()) {
+        m_bearerTokenEdit->setPlaceholderText(
+            QString::fromUtf8("•••••••• (токен сохранён; введите новый, чтобы заменить)"));
+    } else {
+        m_bearerTokenEdit->setPlaceholderText(
+            QString::fromUtf8("Вставьте access_token (Bearer)"));
+    }
     m_pollIntervalSpin->setValue(m_config->pollIntervalSec());
     m_lotsLimitSpin->setValue(m_config->lotsLimit());
     m_outlierNSpin->setValue(m_config->outlierFilterN());
@@ -132,8 +149,6 @@ void SettingsWidget::loadFromConfig() {
 
 void SettingsWidget::saveToConfig() {
     m_config->setRegion(m_regionCombo->currentText());
-    m_config->setClientId(m_clientIdEdit->text());
-    m_config->setClientSecret(m_clientSecretEdit->text());
     m_config->setPollIntervalSec(m_pollIntervalSpin->value());
     m_config->setLotsLimit(m_lotsLimitSpin->value());
     m_config->setOutlierFilterN(m_outlierNSpin->value());
@@ -145,6 +160,16 @@ void SettingsWidget::saveToConfig() {
     m_config->setDbUser(m_dbUserEdit->text());
     m_config->setDbPassword(m_dbPasswordEdit->text());
 
+    if (!m_bearerTokenEdit->text().isEmpty()) {
+        if (!m_config->setBearerToken(m_bearerTokenEdit->text())) {
+            m_statusLabel->setText(QString::fromUtf8("Не удалось сохранить токен (ошибка шифрования)."));
+            m_statusLabel->setStyleSheet("color: red;");
+            return;
+        }
+        m_bearerTokenEdit->clear();
+    }
+
     m_statusLabel->setText(QString::fromUtf8("Настройки сохранены!"));
     m_statusLabel->setStyleSheet("color: green;");
+    loadFromConfig();
 }
