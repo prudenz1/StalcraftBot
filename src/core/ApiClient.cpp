@@ -1,3 +1,17 @@
+/*
+ApiClient.cpp
+    Класс для работы с API Stalcraft.
+    Использует QNetworkAccessManager для отправки запросов и получения ответов.
+    Парсит json с лотами и историей цен.
+    Отправляет результаты через сигналы.
+    Обрабатывает ошибки.
+    Использует Config для получения настроек.
+    Использует Logger для логирования.
+    Использует QJsonDocument для парсинга json.
+    Использует QUrlQuery для сборки параметров запроса.
+    Использует QNetworkRequest для создания запроса.
+    Использует QNetworkReply для получения ответа.  
+*/
 #include "ApiClient.h"
 #include "Config.h"
 #include "utils/Logger.h"
@@ -15,21 +29,29 @@ ApiClient::ApiClient(Config* config, QObject* parent)
 }
 
 QNetworkRequest ApiClient::makeRequest(const QString& path, const QUrlQuery& params) const {
-    QUrl url(m_config->apiBaseUrl() + path);
+    QUrl url(m_config->apiBaseUrl() + path); //сборка ссылки для API
     if (!params.isEmpty()) {
         url.setQuery(params);
     }
 
     QNetworkRequest req(url);
-    const QString tok = m_config->bearerToken();
+    const QString tok = m_config->bearerToken(); //читаем токен из настроек юзера
     if (!tok.isEmpty()) {
         req.setRawHeader("Authorization", QByteArrayLiteral("Bearer ") + tok.toUtf8());
     }
-    req.setRawHeader("Content-Type", "application/json");
+    req.setRawHeader("Content-Type", "application/json"); //установка заголовка Content-Type для json
     return req;
 }
 
-void ApiClient::fetchLots(const QString& itemId, int offset, int limit,
+/*
+------------------------------------------------------------------------------------------------
+Запрос лотов для предмета: GET /{region}/auction/{itemId}/lots
+offset: номер страницы
+limit: кол-во лотов на странице дефолт 100
+sort: поле для сортировки (BUYOUT_PRICE, START_PRICE, START_TIME) 
+order: порядок сортировки (ASC, DESC)
+*/
+void ApiClient::fetchLots(const QString& itemId, int offset, int limit,  
                           const QString& sort, const QString& order) {
     QString path = QString("/%1/auction/%2/lots")
         .arg(m_config->region(), itemId);
@@ -51,6 +73,12 @@ void ApiClient::fetchLots(const QString& itemId, int offset, int limit,
               req.url().toString().toStdString());
 }
 
+/*
+------------------------------------------------------------------------------------------------
+Запрос истории цен для предмета: GET /{region}/auction/{itemId}/history
+offset: номер страницы
+limit: кол-во записей на странице дефолт 200
+*/
 void ApiClient::fetchPriceHistory(const QString& itemId, int offset, int limit) {
     QString path = QString("/%1/auction/%2/history")
         .arg(m_config->region(), itemId);
@@ -58,7 +86,6 @@ void ApiClient::fetchPriceHistory(const QString& itemId, int offset, int limit) 
     QUrlQuery params;
     params.addQueryItem("offset", QString::number(offset));
     params.addQueryItem("limit", QString::number(limit));
-    // Как в открытых парсерах (напр. stalcraft-auction-parser): может влиять на выдачу/пагинацию.
     params.addQueryItem("additional", QStringLiteral("true"));
 
     QNetworkRequest req = makeRequest(path, params);
@@ -71,6 +98,10 @@ void ApiClient::fetchPriceHistory(const QString& itemId, int offset, int limit) 
     LOG_DEBUG("Fetching price history for item {}", itemId.toStdString());
 }
 
+/*
+Обработка ответа от API на запрос лотов (GET /{region}/auction/{itemId}/lots).
+Парсит json с лотами и отправляет результат через сигнал lotsFetched.
+*/
 void ApiClient::handleLotsReply(QNetworkReply* reply, const QString& itemId) {
     reply->deleteLater();
 
@@ -111,11 +142,11 @@ void ApiClient::handleLotsReply(QNetworkReply* reply, const QString& itemId) {
 }
 
 // Обработка ответа от API на запрос истории цен (GET /{region}/auction/{itemId}/history).
-// Парсит JSON с завершёнными сделками и отправляет результат через сигнал priceHistoryFetched.
+// Парсит json с завершенными сделками и отправляет результат через сигнал priceHistoryFetched.
 void ApiClient::handlePriceHistoryReply(QNetworkReply* reply, const QString& itemId) {
     reply->deleteLater(); // Qt освободит объект reply после выхода из event loop
 
-    // Проверка HTTP-ошибок (таймаут, 404, 500 и т.д.)
+    // Проверка http ошибок (таймаут, 404, 500 и т.д.)
     if (reply->error() != QNetworkReply::NoError) {
         QString err = reply->errorString();
         LOG_ERROR("API error fetching price history for {}: {}",
@@ -124,7 +155,7 @@ void ApiClient::handlePriceHistoryReply(QNetworkReply* reply, const QString& ite
         return;
     }
 
-    // Парсинг JSON-ответа. Формат API:
+    // Парсинг json ответа. Формат API:
     // { "total": 43600, "prices": [ { "amount": 1, "price": 50000, "time": "...", "additional": "..." }, ... ] }
     QByteArray data = reply->readAll();
     QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -136,7 +167,7 @@ void ApiClient::handlePriceHistoryReply(QNetworkReply* reply, const QString& ite
     QVector<PriceHistoryEntry> entries;
     entries.reserve(pricesArr.size());
 
-    // Преобразование каждого JSON-объекта в структуру PriceHistoryEntry
+    // Преобразование каждого json объекта в структуру PriceHistoryEntry
     for (const auto& val : pricesArr) {
         QJsonObject obj = val.toObject();
         PriceHistoryEntry entry;

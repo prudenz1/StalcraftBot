@@ -67,9 +67,9 @@ QString Config::apiBaseUrl() const {
 
 QString Config::bearerToken() const {
     const QByteArray env = qgetenv("STALCRAFT_API_BEARER");
-    if (!env.isEmpty()) {
-        return QString::fromUtf8(env);
-    }
+    /*if (!env.isEmpty()) {
+        return QString::fromUtf8(env); // Из переменной окружения STALCRAFT_API_BEARER. преобразуем в QString.
+    }*/
     return loadPersistedBearerToken();
 }
 
