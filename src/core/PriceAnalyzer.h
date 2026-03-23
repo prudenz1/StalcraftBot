@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QObject>
+#include <QMap>
+#include <QPair>
 #include "models/PriceSnapshot.h"
 
 class Database;
@@ -12,6 +14,7 @@ enum class Signal { None, Watch, Buy };
 
 struct AnalysisResult {
     QString itemId;
+    int quality = -1;
     double zScore = 0.0;
     Trend trend = Trend::Flat;
     double trendCoeff = 1.0;
@@ -30,22 +33,23 @@ class PriceAnalyzer : public QObject {
 public:
     explicit PriceAnalyzer(Database* db, Config* config, QObject* parent = nullptr);
 
-    AnalysisResult analyze(const QString& itemId, const PriceSnapshot& current);
-
-    AnalysisResult lastResult(const QString& itemId) const;
+    AnalysisResult analyze(const QString& itemId, int quality, const PriceSnapshot& current);
+    AnalysisResult lastResult(const QString& itemId, int quality) const;
 
 signals:
-    void analysisCompleted(const QString& itemId, const AnalysisResult& result);
+    void analysisCompleted(const QString& itemId, int quality, const AnalysisResult& result);
 
 private:
+    using ResultKey = QPair<QString, int>;
+
     DataLevel determineLevel(int daysOfData) const;
     Trend determineTrend(const QVector<PriceSnapshot>& history) const;
     double trendCoefficient(Trend t) const;
-    double computeTimeCoeffRaw(const QString& itemId, qint64 overallAvg) const;
+    double computeTimeCoeffRaw(const QString& itemId, int quality, qint64 overallAvg) const;
     double normalizeTimeCoeff(double raw, double minCoeff, double maxCoeff) const;
     Signal determineSignal(double rating, DataLevel level) const;
 
     Database* m_db;
     Config* m_config;
-    QMap<QString, AnalysisResult> m_lastResults;
+    QMap<ResultKey, AnalysisResult> m_lastResults;
 };

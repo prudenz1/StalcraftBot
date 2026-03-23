@@ -13,39 +13,38 @@ PriceAnalyzer::PriceAnalyzer(Database* db, Config* config, QObject* parent)
 {
 }
 
-AnalysisResult PriceAnalyzer::lastResult(const QString& itemId) const {
-    return m_lastResults.value(itemId);
+AnalysisResult PriceAnalyzer::lastResult(const QString& itemId, int quality) const {
+    return m_lastResults.value({itemId, quality});
 }
 
-AnalysisResult PriceAnalyzer::analyze(const QString& itemId, const PriceSnapshot& current) {
+AnalysisResult PriceAnalyzer::analyze(const QString& itemId, int quality,
+                                       const PriceSnapshot& current) {
     AnalysisResult result;
     result.itemId = itemId;
+    result.quality = quality;
     result.currentPrice = current.medianPrice;
     result.stdDev = current.stdDev;
 
-    int daysOfData = m_db->daysSinceFirstSnapshot(itemId);
+    int daysOfData = m_db->daysSinceFirstSnapshot(itemId, quality);
     result.level = determineLevel(daysOfData);
 
     int lookbackDays = (daysOfData > 30) ? 30 : daysOfData;
     if (lookbackDays < 1) lookbackDays = 1;
 
-    double overallAvg = m_db->overallAvgPrice(itemId, lookbackDays);
+    double overallAvg = m_db->overallAvgPrice(itemId, quality, lookbackDays);
     result.avgPrice = static_cast<qint64>(overallAvg);
 
-    // Z-Score: (avg - current) / sigma, positive = cheap
     if (current.stdDev > 0.0) {
         result.zScore = (overallAvg - static_cast<double>(current.medianPrice)) / current.stdDev;
     }
 
-    // Trend from recent snapshots
-    QVector<PriceSnapshot> history = m_db->priceHistory(itemId, qMin(lookbackDays, 7));
+    QVector<PriceSnapshot> history = m_db->priceHistory(itemId, quality, qMin(lookbackDays, 7));
     result.trend = determineTrend(history);
     result.trendCoeff = trendCoefficient(result.trend);
 
-    // Time-of-day coefficient
     result.timeCoeffNorm = 1.0;
     if (result.level != DataLevel::Level1 && overallAvg > 0) {
-        auto hourlyData = m_db->hourlyStats(itemId);
+        auto hourlyData = m_db->hourlyStats(itemId, quality);
         if (!hourlyData.isEmpty()) {
             double minC = 1e9, maxC = -1e9;
             QMap<int, double> coeffMap;
@@ -69,21 +68,21 @@ AnalysisResult PriceAnalyzer::analyze(const QString& itemId, const PriceSnapshot
         }
     }
 
-    // Final rating
     result.rating = result.zScore * result.trendCoeff * result.timeCoeffNorm;
     result.signal = determineSignal(result.rating, result.level);
 
-    m_lastResults[itemId] = result;
+    ResultKey key{itemId, quality};
+    m_lastResults[key] = result;
 
-    LOG_INFO("Analysis for {}: Z={:.2f}, trend={}, trendC={:.2f}, timeC={:.2f}, "
+    LOG_INFO("Analysis for {} q={}: Z={:.2f}, trend={}, trendC={:.2f}, timeC={:.2f}, "
              "rating={:.2f}, signal={}, level={}",
-             itemId.toStdString(), result.zScore,
+             itemId.toStdString(), quality, result.zScore,
              (result.trend == Trend::Down ? "DOWN" : result.trend == Trend::Up ? "UP" : "FLAT"),
              result.trendCoeff, result.timeCoeffNorm, result.rating,
              (result.signal == Signal::Buy ? "BUY" : result.signal == Signal::Watch ? "WATCH" : "NONE"),
              static_cast<int>(result.level) + 1);
 
-    emit analysisCompleted(itemId, result);
+    emit analysisCompleted(itemId, quality, result);
     return result;
 }
 
@@ -131,11 +130,12 @@ double PriceAnalyzer::trendCoefficient(Trend t) const {
     return 1.0;
 }
 
-double PriceAnalyzer::computeTimeCoeffRaw(const QString& itemId, qint64 overallAvg) const {
+double PriceAnalyzer::computeTimeCoeffRaw(const QString& itemId, int quality,
+                                           qint64 overallAvg) const {
     if (overallAvg <= 0) return 1.0;
     int hour = QDateTime::currentDateTime().time().hour();
 
-    auto stats = m_db->hourlyStats(itemId);
+    auto stats = m_db->hourlyStats(itemId, quality);
     for (const auto& [h, avgP] : stats) {
         if (h == hour && avgP > 0) {
             return static_cast<double>(overallAvg) / static_cast<double>(avgP);
@@ -148,7 +148,6 @@ double PriceAnalyzer::normalizeTimeCoeff(double raw, double minCoeff, double max
     double spread = maxCoeff - minCoeff;
     if (spread < 0.001) return 1.0;
 
-    // Map to [0.85, 1.15] range: result = 1.0 + (raw - min) * 0.3 / spread
     double norm = 1.0 + (raw - minCoeff) * 0.3 / spread;
     return std::clamp(norm, 0.85, 1.15);
 }

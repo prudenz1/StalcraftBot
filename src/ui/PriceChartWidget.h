@@ -18,6 +18,7 @@ public:
 
 public slots:
     void refreshChart();
+    void onTrackingChanged();
 
 private:
     void setupUi();

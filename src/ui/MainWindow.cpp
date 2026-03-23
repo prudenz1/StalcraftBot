@@ -51,5 +51,5 @@ void MainWindow::setupUi() {
     connect(m_scheduler, &Scheduler::pollFinished, m_priceTable, &PriceTableWidget::refresh);
     connect(m_scheduler, &Scheduler::pollFinished, m_activeLots, &ActiveLotsWidget::refreshItemList);
     connect(m_itemManager, &ItemManagerWidget::itemTrackingChanged, m_activeLots, &ActiveLotsWidget::refreshItemList);
-    connect(m_itemManager, &ItemManagerWidget::itemTrackingChanged, m_priceChart, &PriceChartWidget::refreshChart);
+    connect(m_itemManager, &ItemManagerWidget::itemTrackingChanged, m_priceChart, &PriceChartWidget::onTrackingChanged);
 }

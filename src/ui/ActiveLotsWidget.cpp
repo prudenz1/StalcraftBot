@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QDateTime>
+#include <algorithm>
 
 ActiveLotsWidget::ActiveLotsWidget(Database* db, ApiClient* api, QWidget* parent)
     : QWidget(parent)
@@ -36,10 +37,11 @@ void ActiveLotsWidget::setupUi() {
     layout->addLayout(topLayout);
 
     m_table = new QTableWidget(this);
-    m_table->setColumnCount(4);
+    m_table->setColumnCount(5);
     m_table->setHorizontalHeaderLabels({
         QString::fromUtf8("Цена выкупа"),
         QString::fromUtf8("Стартовая цена"),
+        QString::fromUtf8("Качество"),
         QString::fromUtf8("Время выставления"),
         QString::fromUtf8("Отклонение от медианы")
     });
@@ -57,29 +59,34 @@ void ActiveLotsWidget::setupUi() {
 }
 
 void ActiveLotsWidget::refreshItemList() {
-    QString currentId = m_itemCombo->currentData().toString();
+    QString currentKey = m_itemCombo->currentData().toString();
     m_itemCombo->blockSignals(true);
     m_itemCombo->clear();
 
     auto items = m_db->trackedItems();
     for (const auto& item : items) {
-        m_itemCombo->addItem(
-            QString("%1  [%2]").arg(item.nameRu, item.id), item.id);
+        m_itemCombo->addItem(item.displayName() +
+            QStringLiteral("  [") + item.id + QStringLiteral("]"),
+            item.trackingKey());
     }
 
-    if (!currentId.isEmpty()) {
-        int idx = m_itemCombo->findData(currentId);
+    if (!currentKey.isEmpty()) {
+        int idx = m_itemCombo->findData(currentKey);
         if (idx >= 0) m_itemCombo->setCurrentIndex(idx);
     }
     m_itemCombo->blockSignals(false);
 }
 
 void ActiveLotsWidget::onItemSelected() {
-    QString itemId = m_itemCombo->currentData().toString();
-    if (itemId.isEmpty()) return;
+    QString data = m_itemCombo->currentData().toString();
+    if (data.isEmpty()) return;
+
+    QStringList parts = data.split('|');
+    QString itemId = parts[0];
+    int quality = parts.size() > 1 ? parts[1].toInt() : -1;
 
     if (m_lotsCache.contains(itemId)) {
-        displayLots(itemId);
+        displayLots(itemId, quality);
     } else {
         m_api->fetchLots(itemId);
         m_statusLabel->setText(QString::fromUtf8("Загрузка..."));
@@ -87,8 +94,11 @@ void ActiveLotsWidget::onItemSelected() {
 }
 
 void ActiveLotsWidget::onRefreshClicked() {
-    QString itemId = m_itemCombo->currentData().toString();
-    if (itemId.isEmpty()) return;
+    QString data = m_itemCombo->currentData().toString();
+    if (data.isEmpty()) return;
+
+    QStringList parts = data.split('|');
+    QString itemId = parts[0];
 
     m_api->fetchLots(itemId);
     m_statusLabel->setText(QString::fromUtf8("Загрузка..."));
@@ -98,20 +108,33 @@ void ActiveLotsWidget::onLotsReceived(const QString& itemId, const QVector<Lot>&
     m_lotsCache[itemId] = lots;
     m_totalsCache[itemId] = total;
 
-    if (m_itemCombo->currentData().toString() == itemId) {
-        displayLots(itemId);
+    QString data = m_itemCombo->currentData().toString();
+    QStringList parts = data.split('|');
+    if (!parts.isEmpty() && parts[0] == itemId) {
+        int quality = parts.size() > 1 ? parts[1].toInt() : -1;
+        displayLots(itemId, quality);
     }
 }
 
-void ActiveLotsWidget::displayLots(const QString& itemId) {
-    const auto& lots = m_lotsCache[itemId];
-    int total = m_totalsCache.value(itemId, lots.size());
+void ActiveLotsWidget::displayLots(const QString& itemId, int quality) {
+    const auto& allLots = m_lotsCache[itemId];
+
+    // Filter by quality if specified
+    QVector<Lot> lots;
+    if (quality >= 0) {
+        for (const auto& lot : allLots) {
+            if (lot.quality == quality) lots.append(lot);
+        }
+    } else {
+        lots = allLots;
+    }
+
+    int total = m_totalsCache.value(itemId, allLots.size());
 
     m_statusLabel->setText(
-        QString::fromUtf8("Показано: %1 | Всего на аукционе: %2")
-            .arg(lots.size()).arg(total));
+        QString::fromUtf8("Показано: %1 (из %2) | Всего на аукционе: %3")
+            .arg(lots.size()).arg(allLots.size()).arg(total));
 
-    // Compute median for deviation column
     QVector<qint64> prices;
     for (const auto& lot : lots) {
         if (lot.buyoutPrice > 0) prices.append(lot.buyoutPrice);
@@ -139,6 +162,9 @@ void ActiveLotsWidget::displayLots(const QString& itemId) {
         m_table->setItem(i, 1, startItem);
 
         m_table->setItem(i, 2, new QTableWidgetItem(
+            lot.quality >= 0 ? Item::qualityName(lot.quality) : QStringLiteral("--")));
+
+        m_table->setItem(i, 3, new QTableWidgetItem(
             lot.startTime.toLocalTime().toString("dd.MM.yyyy HH:mm")));
 
         if (lot.buyoutPrice > 0 && median > 0) {
@@ -150,9 +176,9 @@ void ActiveLotsWidget::displayLots(const QString& itemId) {
             } else if (devPct > 20.0) {
                 devItem->setForeground(QColor(231, 76, 60));
             }
-            m_table->setItem(i, 3, devItem);
+            m_table->setItem(i, 4, devItem);
         } else {
-            m_table->setItem(i, 3, new QTableWidgetItem("--"));
+            m_table->setItem(i, 4, new QTableWidgetItem("--"));
         }
     }
 

@@ -8,17 +8,17 @@
 #include <QSplitter>
 #include <QMessageBox>
 #include <QTimer>
+#include <QDialog>
+#include <QCheckBox>
+#include <QDialogButtonBox>
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 
+static const int HISTORY_PAGE_SIZE = 200;
+static const int HISTORY_THROTTLE_MS = 302;
 
-
-static const int HISTORY_PAGE_SIZE = 200;   // Кол-во записей истории за один запрос к API
-static const int HISTORY_THROTTLE_MS = 302; // Пауза между запросами страниц (~200 запр./мин)
-
-/// Создаёт виджет управления предметами: БД, API, загрузчик каталога, UI и связи сигналов.
 ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
@@ -53,7 +53,6 @@ ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* pare
     });
 }
 
-/// Собирает разметку: каталог, поиск, таблицы результатов и отслеживаемых предметов, обработчики кнопок.
 void ItemManagerWidget::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -103,11 +102,12 @@ void ItemManagerWidget::setupUi() {
     trackedGroupLayout->addWidget(new QLabel(QString::fromUtf8("Отслеживаемые предметы:"), trackedGroup));
 
     m_trackedTable = new QTableWidget(trackedGroup);
-    m_trackedTable->setColumnCount(4);
+    m_trackedTable->setColumnCount(5);
     m_trackedTable->setHorizontalHeaderLabels({
         QString::fromUtf8("ID"),
         QString::fromUtf8("Название"),
         QString::fromUtf8("Категория"),
+        QString::fromUtf8("Качество"),
         QString::fromUtf8("Действие")
     });
     m_trackedTable->horizontalHeader()->setStretchLastSection(true);
@@ -125,19 +125,16 @@ void ItemManagerWidget::setupUi() {
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &ItemManagerWidget::onSearch);
 }
 
-/// Запускает загрузку каталога предметов с GitHub через ItemCatalogLoader.
 void ItemManagerWidget::onDownloadCatalog() {
     m_catalogLoader->downloadFromGitHub();
 }
 
-/// Обрабатывает поиск: при непустом запросе заполняет таблицу результатов из БД.
 void ItemManagerWidget::onSearch() {
     QString query = m_searchEdit->text().trimmed();
     if (query.isEmpty()) return;
     populateSearchResults(query);
 }
 
-/// Выводит в таблицу поиска найденные предметы и кнопки «Отслеживать» / «Убрать».
 void ItemManagerWidget::populateSearchResults(const QString& query) {
     auto items = m_db->searchItems(query);
     m_searchTable->setRowCount(items.size());
@@ -148,11 +145,19 @@ void ItemManagerWidget::populateSearchResults(const QString& query) {
         m_searchTable->setItem(i, 1, new QTableWidgetItem(item.nameRu));
         m_searchTable->setItem(i, 2, new QTableWidgetItem(item.category));
 
-        auto* btn = new QPushButton(
-            item.tracked ? QString::fromUtf8("Убрать") : QString::fromUtf8("Отслеживать"),
-            m_searchTable);
+        QString btnText;
+        if (item.hasQualityTier()) {
+            btnText = QString::fromUtf8("Отслеживать");
+        } else {
+            btnText = item.hasTracking
+                ? QString::fromUtf8("Убрать")
+                : QString::fromUtf8("Отслеживать");
+        }
+
+        auto* btn = new QPushButton(btnText, m_searchTable);
         btn->setProperty("itemId", item.id);
-        btn->setProperty("tracked", item.tracked);
+        btn->setProperty("category", item.category);
+        btn->setProperty("hasTracking", item.hasTracking);
 
         connect(btn, &QPushButton::clicked, this, [this, i]() {
             onToggleTracking(i);
@@ -162,28 +167,104 @@ void ItemManagerWidget::populateSearchResults(const QString& query) {
     }
 }
 
-/// Переключает отслеживание предмета по строке таблицы поиска; при включении тянет полную историю цен.
 void ItemManagerWidget::onToggleTracking(int row) {
     auto* btn = qobject_cast<QPushButton*>(m_searchTable->cellWidget(row, 3));
     if (!btn) return;
 
     QString itemId = btn->property("itemId").toString();
-    bool tracked = btn->property("tracked").toBool();
-    bool newState = !tracked;
+    QString category = btn->property("category").toString();
+    bool hasTrack = btn->property("hasTracking").toBool();
 
-    if (m_db->setItemTracked(itemId, newState)) {
-        btn->setProperty("tracked", newState);
-        btn->setText(newState ? QString::fromUtf8("Убрать") : QString::fromUtf8("Отслеживать"));
+    bool isQualityItem = category.startsWith(QStringLiteral("artefact/"))
+        || category == QStringLiteral("weapon_modules/weapon_module")
+        || category == QStringLiteral("weapon_modules/weapon_module_core");
+
+    if (isQualityItem) {
+        QDialog dlg(this);
+        dlg.setWindowTitle(QString::fromUtf8("Качество предмета"));
+        auto* dlgLayout = new QVBoxLayout(&dlg);
+        dlgLayout->addWidget(new QLabel(
+            QString::fromUtf8("Выберите качество для отслеживания (можно несколько):"), &dlg));
+
+        QStringList qualityNames = {
+            QString::fromUtf8("Все качества"),
+            QString::fromUtf8("Обычный (0)"),
+            QString::fromUtf8("Необычный (1)"),
+            QString::fromUtf8("Особый (2)"),
+            QString::fromUtf8("Редкий (3)"),
+            QString::fromUtf8("Исключительный (4)"),
+            QString::fromUtf8("Легендарный (5)")
+        };
+
+        QVector<QCheckBox*> checkboxes;
+        for (const auto& name : qualityNames) {
+            auto* cb = new QCheckBox(name, &dlg);
+            dlgLayout->addWidget(cb);
+            checkboxes.append(cb);
+        }
+
+        // "Все качества" снимает остальные и наоборот
+        connect(checkboxes[0], &QCheckBox::toggled, &dlg, [&checkboxes](bool checked) {
+            if (checked) {
+                for (int i = 1; i < checkboxes.size(); ++i)
+                    checkboxes[i]->setChecked(false);
+            }
+        });
+        for (int i = 1; i < checkboxes.size(); ++i) {
+            connect(checkboxes[i], &QCheckBox::toggled, &dlg, [&checkboxes](bool checked) {
+                if (checked)
+                    checkboxes[0]->setChecked(false);
+            });
+        }
+
+        auto* btnBox = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        dlgLayout->addWidget(btnBox);
+        connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        QVector<int> selectedQualities;
+        if (checkboxes[0]->isChecked()) {
+            selectedQualities.append(-1);
+        } else {
+            for (int i = 1; i < checkboxes.size(); ++i) {
+                if (checkboxes[i]->isChecked())
+                    selectedQualities.append(i - 1);
+            }
+        }
+        if (selectedQualities.isEmpty()) return;
+
+        for (int quality : selectedQualities) {
+            m_db->addTracking(itemId, quality);
+            fetchFullPriceHistory(itemId, quality);
+        }
+        btn->setProperty("hasTracking", true);
         refreshTrackedList();
         emit itemTrackingChanged();
-
-        if (newState) {
-            fetchFullPriceHistory(itemId);
+    } else {
+        if (hasTrack) {
+            m_db->removeAllTracking(itemId);
+            btn->setProperty("hasTracking", false);
+            btn->setText(QString::fromUtf8("Отслеживать"));
+        } else {
+            m_db->addTracking(itemId, -1);
+            btn->setProperty("hasTracking", true);
+            btn->setText(QString::fromUtf8("Убрать"));
+            fetchFullPriceHistory(itemId, -1);
         }
+        refreshTrackedList();
+        emit itemTrackingChanged();
     }
 }
 
-/// Обновляет таблицу отслеживаемых предметов из БД и кнопки «Убрать».
+void ItemManagerWidget::onRemoveTracking(int trackingId) {
+    m_db->removeTracking(trackingId);
+    refreshTrackedList();
+    emit itemTrackingChanged();
+}
+
 void ItemManagerWidget::refreshTrackedList() {
     auto items = m_db->trackedItems();
     m_trackedTable->setRowCount(items.size());
@@ -193,25 +274,23 @@ void ItemManagerWidget::refreshTrackedList() {
         m_trackedTable->setItem(i, 0, new QTableWidgetItem(item.id));
         m_trackedTable->setItem(i, 1, new QTableWidgetItem(item.nameRu));
         m_trackedTable->setItem(i, 2, new QTableWidgetItem(item.category));
+        m_trackedTable->setItem(i, 3, new QTableWidgetItem(Item::qualityName(item.quality)));
 
         auto* btn = new QPushButton(QString::fromUtf8("Убрать"), m_trackedTable);
-        btn->setProperty("itemId", item.id);
-        connect(btn, &QPushButton::clicked, this, [this, itemId = item.id]() {
-            m_db->setItemTracked(itemId, false);
-            refreshTrackedList();
-            emit itemTrackingChanged();
+        int tid = item.trackingId;
+        connect(btn, &QPushButton::clicked, this, [this, tid]() {
+            onRemoveTracking(tid);
         });
-        m_trackedTable->setCellWidget(i, 3, btn);
+        m_trackedTable->setCellWidget(i, 4, btn);
     }
 }
 
 // --- Price history import ---
 
-// Начинает загрузку всей доступной истории цен предмета с API.
-// Сбрасывает накопитель и запрашивает первую страницу (offset=0).
-void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId) {
+void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId, int quality) {
     m_pendingHistory[itemId].clear();
     m_historyTotal[itemId] = 0;
+    m_importQuality[itemId] = quality;
 
     m_historyStatus->setVisible(true);
     m_historyStatus->setText(QString::fromUtf8("Загрузка истории цен для %1...").arg(itemId));
@@ -222,13 +301,11 @@ void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId) {
     fetchHistoryPage(itemId, 0);
 }
 
-/// Запрашивает у API одну страницу истории цен (размер HISTORY_PAGE_SIZE) с заданным смещением.
 void ItemManagerWidget::fetchHistoryPage(const QString& itemId, int offset) {
     LOG_INFO("Fetching price history page for {}, offset={}", itemId.toStdString(), offset);
     m_api->fetchPriceHistory(itemId, offset, HISTORY_PAGE_SIZE);
 }
 
-// Планирует запрос следующей страницы через HISTORY_THROTTLE_MS мс (защита от rate limit API).
 void ItemManagerWidget::scheduleNextHistoryPage(const QString& itemId, int offset) {
     QTimer::singleShot(HISTORY_THROTTLE_MS, this, [this, itemId, offset]() {
         if (m_pendingHistory.contains(itemId))
@@ -236,9 +313,6 @@ void ItemManagerWidget::scheduleNextHistoryPage(const QString& itemId, int offse
     });
 }
 
-// Вызывается при получении очередной страницы истории от API.
-// Накапливает записи в m_pendingHistory; если ещё не все — запрашивает следующую страницу
-// через таймер. Когда все записи получены — передаёт их в storeHistoryEntries для записи в БД.
 void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
                                               const QVector<PriceHistoryEntry>& entries,
                                               int total) {
@@ -256,28 +330,39 @@ void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
         scheduleNextHistoryPage(itemId, fetched);
     } else {
         LOG_INFO("Price history complete for {}: {} entries", itemId.toStdString(), fetched);
-        storeHistoryEntries(itemId, m_pendingHistory[itemId]);
+        int quality = m_importQuality.value(itemId, -1);
+        storeHistoryEntries(itemId, quality, m_pendingHistory[itemId]);
         m_pendingHistory.remove(itemId);
         m_historyTotal.remove(itemId);
+        m_importQuality.remove(itemId);
         m_historyStatus->setText(
             QString::fromUtf8("История %1 загружена: %2 записей").arg(itemId).arg(fetched));
     }
 }
 
-// Группирует все полученные сделки по часам и для каждого часа считает статистику
-// (min, avg, median, max, stddev). Результат сохраняется в таблицу price_snapshots (по строке на час)
-// и обновляет hourly_stats (средняя цена по часам суток для коэффициента времени).
-void ItemManagerWidget::storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries) {
+void ItemManagerWidget::storeHistoryEntries(const QString& itemId, int quality,
+                                            const QVector<PriceHistoryEntry>& allEntries) {
     if (allEntries.isEmpty()) return;
 
-    QMap<qint64, QVector<qint64>> hourBuckets;
-
+    // Filter entries by target quality
+    QVector<const PriceHistoryEntry*> filtered;
     for (const auto& entry : allEntries) {
         if (entry.price <= 0 || !entry.time.isValid()) continue;
-        QDateTime hourStart = entry.time;
+        if (quality >= 0 && entry.quality != quality) continue;
+        filtered.append(&entry);
+    }
+
+    if (filtered.isEmpty()) {
+        LOG_WARN("No history entries match quality {} for {}", quality, itemId.toStdString());
+        return;
+    }
+
+    QMap<qint64, QVector<qint64>> hourBuckets;
+    for (const auto* entry : filtered) {
+        QDateTime hourStart = entry->time;
         hourStart.setTime(QTime(hourStart.time().hour(), 0, 0));
         qint64 key = hourStart.toSecsSinceEpoch();
-        hourBuckets[key].append(entry.price);
+        hourBuckets[key].append(entry->price);
     }
 
     int saved = 0;
@@ -304,6 +389,7 @@ void ItemManagerWidget::storeHistoryEntries(const QString& itemId, const QVector
 
         PriceSnapshot snap;
         snap.itemId = itemId;
+        snap.quality = quality;
         snap.timestamp = QDateTime::fromSecsSinceEpoch(it.key(), Qt::UTC);
         snap.minPrice = minP;
         snap.avgPrice = avgP;
@@ -315,10 +401,10 @@ void ItemManagerWidget::storeHistoryEntries(const QString& itemId, const QVector
         m_db->insertPriceSnapshot(snap);
 
         int hour = snap.timestamp.time().hour();
-        m_db->upsertHourlyStat(itemId, hour, medianP, 1);
+        m_db->upsertHourlyStat(itemId, quality, hour, medianP, 1);
         saved++;
     }
 
-    LOG_INFO("Stored {} aggregated snapshots for {} from {} history entries",
-             saved, itemId.toStdString(), allEntries.size());
+    LOG_INFO("Stored {} aggregated snapshots for {} q={} from {} history entries",
+             saved, itemId.toStdString(), quality, filtered.size());
 }

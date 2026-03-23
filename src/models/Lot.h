@@ -9,4 +9,5 @@ struct Lot {
     qint64 buyoutPrice = 0;
     QDateTime startTime;
     QDateTime snapshotTime;
+    int quality = -1;
 };

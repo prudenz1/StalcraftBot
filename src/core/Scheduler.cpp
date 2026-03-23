@@ -59,14 +59,24 @@ void Scheduler::onPollTimer() {
         return;
     }
 
+    // Group tracked entries by itemId to fetch lots once per item
+    QMap<QString, QVector<int>> qualityMap;
+    for (const auto& item : tracked) {
+        qualityMap[item.id].append(item.quality);
+    }
+
     m_polling = true;
     m_itemQueue.clear();
-    for (const auto& item : tracked) {
-        m_itemQueue.enqueue(item.id);
+    for (auto it = qualityMap.begin(); it != qualityMap.end(); ++it) {
+        QueueEntry entry;
+        entry.itemId = it.key();
+        entry.qualities = it.value();
+        m_itemQueue.enqueue(entry);
     }
 
     emit pollStarted();
-    LOG_INFO("Poll started for {} tracked items", tracked.size());
+    LOG_INFO("Poll started for {} items ({} tracking entries)",
+             m_itemQueue.size(), tracked.size());
     processNextItem();
 }
 
@@ -78,23 +88,37 @@ void Scheduler::processNextItem() {
         return;
     }
 
-    QString itemId = m_itemQueue.dequeue();
-    emit pollItemStarted(itemId);
-    m_api->fetchLots(itemId, 0, m_config->lotsLimit());
+    m_currentEntry = m_itemQueue.dequeue();
+    emit pollItemStarted(m_currentEntry.itemId);
+    m_api->fetchLots(m_currentEntry.itemId, 0, m_config->lotsLimit());
 }
 
 void Scheduler::onLotsFetched(const QString& itemId, const QVector<Lot>& lots, int total) {
+    if (itemId != m_currentEntry.itemId) return;
+
     LOG_INFO("Processing {} lots for item {} (total on auction: {})",
              lots.size(), itemId.toStdString(), total);
 
     m_db->insertLotSnapshots(itemId, lots);
-    aggregateAndAnalyze(itemId, lots);
+
+    for (int quality : m_currentEntry.qualities) {
+        QVector<Lot> filtered;
+        if (quality >= 0) {
+            for (const auto& lot : lots) {
+                if (lot.quality == quality) filtered.append(lot);
+            }
+        } else {
+            filtered = lots;
+        }
+        aggregateAndAnalyze(itemId, quality, filtered);
+    }
 
     emit pollItemFinished(itemId);
     processNextItem();
 }
 
-void Scheduler::aggregateAndAnalyze(const QString& itemId, const QVector<Lot>& lots) {
+void Scheduler::aggregateAndAnalyze(const QString& itemId, int quality,
+                                     const QVector<Lot>& lots) {
     if (lots.isEmpty()) return;
 
     QVector<qint64> prices;
@@ -134,6 +158,7 @@ void Scheduler::aggregateAndAnalyze(const QString& itemId, const QVector<Lot>& l
 
     PriceSnapshot snap;
     snap.itemId = itemId;
+    snap.quality = quality;
     snap.minPrice = minP;
     snap.avgPrice = avgP;
     snap.medianPrice = medianP;
@@ -145,8 +170,8 @@ void Scheduler::aggregateAndAnalyze(const QString& itemId, const QVector<Lot>& l
     m_db->insertPriceSnapshot(snap);
 
     int currentHour = QDateTime::currentDateTime().time().hour();
-    m_db->upsertHourlyStat(itemId, currentHour, medianP, 1);
+    m_db->upsertHourlyStat(itemId, quality, currentHour, medianP, 1);
 
-    m_analyzer->analyze(itemId, snap);
-    m_detector->evaluate(itemId, lots, snap);
+    m_analyzer->analyze(itemId, quality, snap);
+    m_detector->evaluate(itemId, quality, lots, snap);
 }

@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 #include <QVector>
 #include <QDateTime>
+#include <QMap>
 
 #include "core/ApiClient.h"
 
@@ -26,17 +27,20 @@ signals:
 private slots:
     void onSearch();
     void onToggleTracking(int row);
+    void onRemoveTracking(int trackingId);
     void refreshTrackedList();
     void onDownloadCatalog();
 
 private:
     void setupUi();
     void populateSearchResults(const QString& query);
-    void fetchFullPriceHistory(const QString& itemId);
+    void fetchFullPriceHistory(const QString& itemId, int quality);
     void fetchHistoryPage(const QString& itemId, int offset);
     void scheduleNextHistoryPage(const QString& itemId, int offset);
-    void onHistoryPageReceived(const QString& itemId, const QVector<PriceHistoryEntry>& entries, int total);
-    void storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries);
+    void onHistoryPageReceived(const QString& itemId,
+                               const QVector<PriceHistoryEntry>& entries, int total);
+    void storeHistoryEntries(const QString& itemId, int quality,
+                             const QVector<PriceHistoryEntry>& allEntries);
 
     Database* m_db;
     ApiClient* m_api;
@@ -44,6 +48,7 @@ private:
 
     QMap<QString, QVector<PriceHistoryEntry>> m_pendingHistory;
     QMap<QString, int> m_historyTotal;
+    QMap<QString, int> m_importQuality;
 
     QPushButton* m_downloadBtn = nullptr;
     QProgressBar* m_progressBar = nullptr;

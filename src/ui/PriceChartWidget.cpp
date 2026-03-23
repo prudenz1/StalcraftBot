@@ -1,5 +1,6 @@
 #include "PriceChartWidget.h"
 #include "core/Database.h"
+#include "models/Item.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -53,16 +54,24 @@ void PriceChartWidget::populateItemCombo() {
     m_itemCombo->clear();
     auto items = m_db->trackedItems();
     for (const auto& item : items) {
-        m_itemCombo->addItem(item.nameRu, item.id);
+        m_itemCombo->addItem(item.displayName(), item.trackingKey());
     }
 }
 
+void PriceChartWidget::onTrackingChanged() {
+    populateItemCombo();
+}
+
 void PriceChartWidget::refreshChart() {
-    QString itemId = m_itemCombo->currentData().toString();
-    if (itemId.isEmpty()) return;
+    QString data = m_itemCombo->currentData().toString();
+    if (data.isEmpty()) return;
+
+    QStringList parts = data.split('|');
+    QString itemId = parts[0];
+    int quality = parts.size() > 1 ? parts[1].toInt() : -1;
 
     int days = m_daysSpin->value();
-    auto history = m_db->priceHistory(itemId, days);
+    auto history = m_db->priceHistory(itemId, quality, days);
 
     m_chart->removeAllSeries();
     for (auto* axis : m_chart->axes()) {

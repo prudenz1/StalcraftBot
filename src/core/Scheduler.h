@@ -4,6 +4,7 @@
 #include <QTimer>
 #include <QQueue>
 #include <QVector>
+#include <QMap>
 #include "models/Lot.h"
 
 class Config;
@@ -34,8 +35,13 @@ private slots:
     void onLotsFetched(const QString& itemId, const QVector<Lot>& lots, int total);
 
 private:
+    struct QueueEntry {
+        QString itemId;
+        QVector<int> qualities;
+    };
+
     void processNextItem();
-    void aggregateAndAnalyze(const QString& itemId, const QVector<Lot>& lots);
+    void aggregateAndAnalyze(const QString& itemId, int quality, const QVector<Lot>& lots);
 
     Config* m_config;
     Database* m_db;
@@ -44,6 +50,7 @@ private:
     DealDetector* m_detector;
 
     QTimer* m_pollTimer;
-    QQueue<QString> m_itemQueue;
+    QQueue<QueueEntry> m_itemQueue;
+    QueueEntry m_currentEntry;
     bool m_polling = false;
 };

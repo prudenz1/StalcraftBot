@@ -9,6 +9,7 @@
 #include <QVector>
 
 #include "models/Lot.h"
+#include "models/Item.h"
 
 class Database;
 class ApiClient;
@@ -28,7 +29,7 @@ private slots:
 
 private:
     void setupUi();
-    void displayLots(const QString& itemId);
+    void displayLots(const QString& itemId, int quality);
 
     Database* m_db;
     ApiClient* m_api;

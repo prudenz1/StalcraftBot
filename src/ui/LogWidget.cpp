@@ -1,5 +1,6 @@
 #include "LogWidget.h"
 #include "core/Database.h"
+#include "models/Item.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -66,6 +67,8 @@ void LogWidget::addAlert(const Alert& alert) {
     m_table->setItem(row, 0, new QTableWidgetItem(
         QDateTime::currentDateTime().toString("HH:mm:ss dd.MM")));
     QString displayName = alert.itemName.isEmpty() ? alert.itemId : alert.itemName;
+    if (alert.quality >= 0)
+        displayName += QStringLiteral(" [") + Item::qualityName(alert.quality) + QStringLiteral("]");
     m_table->setItem(row, 1, new QTableWidgetItem(displayName));
 
     QString typeStr = Alert::typeToString(alert.type);
@@ -111,6 +114,8 @@ void LogWidget::refresh() {
         m_table->setItem(row, 0, new QTableWidgetItem(
             alert.createdAt.toString("HH:mm:ss dd.MM")));
         QString displayName = alert.itemName.isEmpty() ? alert.itemId : alert.itemName;
+        if (alert.quality >= 0)
+            displayName += QStringLiteral(" [") + Item::qualityName(alert.quality) + QStringLiteral("]");
         m_table->setItem(row, 1, new QTableWidgetItem(displayName));
 
         QString typeStr = Alert::typeToString(alert.type);

@@ -1,13 +1,20 @@
 CREATE TABLE IF NOT EXISTS items (
     id         VARCHAR(16) PRIMARY KEY,
     category   VARCHAR(128) NOT NULL,
-    name_ru    VARCHAR(256) NOT NULL,
-    tracked    BOOLEAN DEFAULT FALSE
+    name_ru    VARCHAR(256) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tracked_items (
+    id         SERIAL PRIMARY KEY,
+    item_id    VARCHAR(16) NOT NULL REFERENCES items(id),
+    quality    SMALLINT NOT NULL DEFAULT -1,
+    UNIQUE(item_id, quality)
 );
 
 CREATE TABLE IF NOT EXISTS lot_snapshots (
     id            BIGSERIAL PRIMARY KEY,
     item_id       VARCHAR(16) REFERENCES items(id),
+    quality       SMALLINT NOT NULL DEFAULT -1,
     buyout_price  BIGINT,
     start_price   BIGINT,
     start_time    TIMESTAMPTZ,
@@ -20,6 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_lot_snapshots_item_time
 CREATE TABLE IF NOT EXISTS price_snapshots (
     id             BIGSERIAL PRIMARY KEY,
     item_id        VARCHAR(16) REFERENCES items(id),
+    quality        SMALLINT NOT NULL DEFAULT -1,
     timestamp      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     min_price      BIGINT,
     avg_price      BIGINT,
@@ -36,16 +44,18 @@ CREATE INDEX IF NOT EXISTS idx_price_snapshots_item_time
 CREATE TABLE IF NOT EXISTS hourly_stats (
     id           BIGSERIAL PRIMARY KEY,
     item_id      VARCHAR(16) REFERENCES items(id),
+    quality      SMALLINT NOT NULL DEFAULT -1,
     hour         SMALLINT NOT NULL CHECK (hour BETWEEN 0 AND 23),
     avg_price    BIGINT,
     sample_count INT,
     updated_at   TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(item_id, hour)
+    UNIQUE(item_id, quality, hour)
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
     id         BIGSERIAL PRIMARY KEY,
     item_id    VARCHAR(16) REFERENCES items(id),
+    quality    SMALLINT NOT NULL DEFAULT -1,
     alert_type VARCHAR(16) NOT NULL,
     rating     DOUBLE PRECISION,
     message    TEXT,

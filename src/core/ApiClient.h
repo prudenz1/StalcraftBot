@@ -14,6 +14,7 @@ struct PriceHistoryEntry {
     qint64 amount = 0;
     qint64 price = 0;
     QDateTime time;
+    int quality = -1;
     QString additional;
 };
 

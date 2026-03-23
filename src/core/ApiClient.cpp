@@ -61,6 +61,7 @@ void ApiClient::fetchLots(const QString& itemId, int offset, int limit,
     params.addQueryItem("limit", QString::number(limit));
     params.addQueryItem("sort", sort);
     params.addQueryItem("order", order);
+    params.addQueryItem("additional", QStringLiteral("true"));
 
     QNetworkRequest req = makeRequest(path, params);
     QNetworkReply* reply = m_nam->get(req);
@@ -133,6 +134,13 @@ void ApiClient::handleLotsReply(QNetworkReply* reply, const QString& itemId) {
         lot.startTime = QDateTime::fromString(timeStr, Qt::ISODate);
         lot.snapshotTime = QDateTime::currentDateTimeUtc();
 
+        QJsonValue addVal = obj["additional"];
+        if (addVal.isObject()) {
+            QJsonObject addObj = addVal.toObject();
+            if (addObj.contains("qlt"))
+                lot.quality = addObj["qlt"].toInt(-1);
+        }
+
         lots.append(lot);
     }
 
@@ -180,8 +188,11 @@ void ApiClient::handlePriceHistoryReply(QNetworkReply* reply, const QString& ite
         }
         QJsonValue addVal = obj["additional"];
         if (addVal.isObject()) {
+            QJsonObject addObj = addVal.toObject();
             entry.additional = QString::fromUtf8(
-                QJsonDocument(addVal.toObject()).toJson(QJsonDocument::Compact));
+                QJsonDocument(addObj).toJson(QJsonDocument::Compact));
+            if (addObj.contains("qlt"))
+                entry.quality = addObj["qlt"].toInt(-1);
         } else {
             entry.additional = addVal.toString();
         }

@@ -6,6 +6,7 @@
 struct PriceSnapshot {
     qint64 id = 0;
     QString itemId;
+    int quality = -1;
     QDateTime timestamp;
     qint64 minPrice = 0;
     qint64 avgPrice = 0;

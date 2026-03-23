@@ -12,6 +12,7 @@ enum class AlertType {
 struct Alert {
     qint64 id = 0;
     QString itemId;
+    int quality = -1;
     QString itemName;
     AlertType type = AlertType::Watch;
     double rating = 0.0;

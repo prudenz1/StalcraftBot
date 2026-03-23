@@ -15,14 +15,15 @@ DealDetector::DealDetector(Database* db, Config* config,
 {
 }
 
-void DealDetector::evaluate(const QString& itemId, const QVector<Lot>& lots,
-                            const PriceSnapshot& snapshot) {
+void DealDetector::evaluate(const QString& itemId, int quality,
+                            const QVector<Lot>& lots, const PriceSnapshot& snapshot) {
     m_currentItemName = m_db->itemName(itemId);
-    checkCheapLots(itemId, lots, snapshot);
-    checkAnalysisSignal(itemId, snapshot);
+    checkCheapLots(itemId, quality, lots, snapshot);
+    checkAnalysisSignal(itemId, quality, snapshot);
 }
 
-void DealDetector::checkCheapLots(const QString& itemId, const QVector<Lot>& lots,
+void DealDetector::checkCheapLots(const QString& itemId, int quality,
+                                   const QVector<Lot>& lots,
                                    const PriceSnapshot& snapshot) {
     if (snapshot.medianPrice <= 0) return;
 
@@ -37,11 +38,11 @@ void DealDetector::checkCheapLots(const QString& itemId, const QVector<Lot>& lot
 
         double profitPct = (static_cast<double>(profit) / lot.buyoutPrice) * 100.0;
 
-        // Only signal if profit > 5% (to cover commission + margin)
         if (profitPct < 5.0) continue;
 
         Alert alert;
         alert.itemId = itemId;
+        alert.quality = quality;
         alert.itemName = m_currentItemName;
         alert.type = AlertType::CheapLot;
         alert.rating = profitPct;
@@ -55,18 +56,20 @@ void DealDetector::checkCheapLots(const QString& itemId, const QVector<Lot>& lot
         m_db->insertAlert(alert);
         emit alertGenerated(alert);
 
-        LOG_INFO("CHEAP LOT detected for {}: price={}, median={}, profit={} ({:.1f}%)",
-                 itemId.toStdString(), lot.buyoutPrice, snapshot.medianPrice,
+        LOG_INFO("CHEAP LOT detected for {} q={}: price={}, median={}, profit={} ({:.1f}%)",
+                 itemId.toStdString(), quality, lot.buyoutPrice, snapshot.medianPrice,
                  profit, profitPct);
     }
 }
 
-void DealDetector::checkAnalysisSignal(const QString& itemId, const PriceSnapshot& snapshot) {
-    AnalysisResult result = m_analyzer->lastResult(itemId);
+void DealDetector::checkAnalysisSignal(const QString& itemId, int quality,
+                                        const PriceSnapshot& snapshot) {
+    AnalysisResult result = m_analyzer->lastResult(itemId, quality);
     if (result.signal == Signal::None) return;
 
     Alert alert;
     alert.itemId = itemId;
+    alert.quality = quality;
     alert.itemName = m_currentItemName;
     alert.rating = result.rating;
 
