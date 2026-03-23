@@ -11,9 +11,11 @@ PriceChartWidget::PriceChartWidget(Database* db, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
 {
+    // Инициализируем виджет и элементы управления.
     setupUi();
 }
 
+// Строит UI: фильтры (предмет, дни) и график (линейные серии).
 void PriceChartWidget::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
@@ -50,6 +52,7 @@ void PriceChartWidget::setupUi() {
     populateItemCombo();
 }
 
+// Заполняет выпадающий список предметов теми, которые сейчас отслеживаются в БД.
 void PriceChartWidget::populateItemCombo() {
     m_itemCombo->clear();
     auto items = m_db->trackedItems();
@@ -58,10 +61,12 @@ void PriceChartWidget::populateItemCombo() {
     }
 }
 
+// Слот: вызывается при изменении списка отслеживаемых предметов.
 void PriceChartWidget::onTrackingChanged() {
     populateItemCombo();
 }
 
+// Перерисовывает график по текущему выбранному предмету и количеству дней.
 void PriceChartWidget::refreshChart() {
     QString data = m_itemCombo->currentData().toString();
     if (data.isEmpty()) return;

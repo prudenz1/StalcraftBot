@@ -14,9 +14,11 @@ PriceTableWidget::PriceTableWidget(Database* db, PriceAnalyzer* analyzer,
     , m_db(db)
     , m_analyzer(analyzer)
 {
+    // Таблица зависит от БД (данные) и анализатора (последние расчёты).
     setupUi();
 }
 
+// Строит UI таблицы статистики и кнопку ручного обновления.
 void PriceTableWidget::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
@@ -54,6 +56,7 @@ void PriceTableWidget::setupUi() {
     connect(m_refreshBtn, &QPushButton::clicked, this, &PriceTableWidget::refresh);
 }
 
+// Загружает по всем отслеживаемым позициям актуальный снапшот и вычисленный анализ.
 void PriceTableWidget::refresh() {
     auto tracked = m_db->trackedItems();
     m_table->setRowCount(tracked.size());

@@ -23,9 +23,11 @@ MainWindow::MainWindow(Config* config, Database* db, ApiClient* api,
     , m_analyzer(analyzer)
     , m_detector(detector)
 {
+    // Создаём вкладки и связываем сигналы слоёв приложения.
     setupUi();
 }
 
+// Собирает основное окно: табы, виджеты и подключения сигналов/слотов.
 void MainWindow::setupUi() {
     setWindowTitle("Stalcraft Auction Bot");
     resize(1200, 800);

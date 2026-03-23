@@ -10,6 +10,8 @@
 #include "ui/MainWindow.h"
 
 int main(int argc, char* argv[]) {
+    // Точка входа приложения: создаёт зависимости (Config/DB/API/аналитика),
+    // поднимает UI и запускает планировщик опросов, если БД доступна.
     QApplication app(argc, argv);
     app.setApplicationName("StalcraftBot");
     app.setOrganizationName("StalcraftBot");

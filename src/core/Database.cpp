@@ -10,12 +10,16 @@ Database::Database(Config* config, QObject* parent)
     : QObject(parent)
     , m_config(config)
 {
+    // `Database` хранит настройки БД и предоставляет методы доступа к данным:
+    // миграции схемы, CRUD трекинга и выборки истории цен/алертов.
 }
 
+// Разрывает соединение и снимает подписки (через `disconnect()`).
 Database::~Database() {
     disconnect();
 }
 
+// Подключается к PostgreSQL по параметрам из `Config`.
 bool Database::connect() {
     QString connStr = QString("host=%1 port=%2 dbname=%3 user=%4 password=%5")
         .arg(m_config->dbHost())
@@ -41,6 +45,7 @@ bool Database::connect() {
     return true;
 }
 
+// Закрывает активное соединение с БД (если оно было открыто).
 void Database::disconnect() {
     if (m_conn) {
         PQfinish(m_conn);
@@ -49,10 +54,13 @@ void Database::disconnect() {
     }
 }
 
+// Быстрая проверка: соединение есть и работает (CONNECTION_OK).
 bool Database::isConnected() const {
     return m_conn && PQstatus(m_conn) == CONNECTION_OK;
 }
 
+// Применяет миграцию схемы: читает `sql/schema.sql` или выполняет inline SQL,
+// затем пытается преобразовать старую структуру через `migrateFromV1()`.
 void Database::migrate() {
     QString schemaPath = QCoreApplication::applicationDirPath() + "/../sql/schema.sql";
     QFile file(schemaPath);
@@ -137,6 +145,9 @@ void Database::migrate() {
     LOG_INFO("Database migration completed");
 }
 
+// Миграция из версии 1 в текущий формат:
+// перенос `items.tracked` в `tracked_items`, расширение таблиц колонкой `quality`
+// и перестройка уникальных ограничений.
 void Database::migrateFromV1() {
     // tracked_items table (idempotent)
     exec("CREATE TABLE IF NOT EXISTS tracked_items ("
@@ -172,6 +183,7 @@ void Database::migrateFromV1() {
 
 // --- Items catalog ---
 
+// Вставляет или обновляет запись предмета в таблице `items`.
 bool Database::upsertItem(const Item& item) {
     QString sql = QString(
         "INSERT INTO items (id, category, name_ru) "
@@ -181,6 +193,8 @@ bool Database::upsertItem(const Item& item) {
     return exec(sql);
 }
 
+// Пакетно обновляет список предметов в транзакции:
+// если какая-то операция не удалась — откатывает `ROLLBACK`.
 bool Database::upsertItems(const QVector<Item>& items) {
     if (items.isEmpty()) return true;
 
@@ -194,6 +208,7 @@ bool Database::upsertItems(const QVector<Item>& items) {
     return exec("COMMIT");
 }
 
+// Возвращает все предметы отсортированные по русскому названию.
 QVector<Item> Database::allItems() {
     QVector<Item> result;
     PGresult* res = query("SELECT id, category, name_ru FROM items ORDER BY name_ru");
@@ -211,6 +226,8 @@ QVector<Item> Database::allItems() {
     return result;
 }
 
+// Ищет предметы по подстроке в названии/ID/категории,
+// а также помечает, есть ли у предмета активный трекинг.
 QVector<Item> Database::searchItems(const QString& queryStr) {
     QVector<Item> result;
     QString sql = QString(
@@ -240,6 +257,7 @@ QVector<Item> Database::searchItems(const QString& queryStr) {
 
 // --- Tracking ---
 
+// Возвращает все трекинги: предмет + trackingId + quality.
 QVector<Item> Database::trackedItems() {
     QVector<Item> result;
     PGresult* res = query(
@@ -263,6 +281,7 @@ QVector<Item> Database::trackedItems() {
     return result;
 }
 
+// Добавляет трекинг конкретного item_id и quality (уникальность задаётся `(item_id, quality)`).
 bool Database::addTracking(const QString& itemId, int quality) {
     QString sql = QString(
         "INSERT INTO tracked_items (item_id, quality) VALUES ('%1', %2) "
@@ -271,17 +290,20 @@ bool Database::addTracking(const QString& itemId, int quality) {
     return exec(sql);
 }
 
+// Удаляет трекинг по его `id` в таблице `tracked_items`.
 bool Database::removeTracking(int trackingId) {
     QString sql = QString("DELETE FROM tracked_items WHERE id = %1").arg(trackingId);
     return exec(sql);
 }
 
+// Удаляет все трекинги для конкретного item_id.
 bool Database::removeAllTracking(const QString& itemId) {
     QString sql = QString("DELETE FROM tracked_items WHERE item_id = '%1'")
         .arg(escape(itemId));
     return exec(sql);
 }
 
+// Проверяет, существует ли любой трекинг для item_id (включая quality=-1).
 bool Database::hasTracking(const QString& itemId) {
     PGresult* res = query(QString(
         "SELECT 1 FROM tracked_items WHERE item_id = '%1' LIMIT 1")
@@ -294,6 +316,7 @@ bool Database::hasTracking(const QString& itemId) {
 
 // --- Lot Snapshots ---
 
+// Сохраняет историю лотов (raw данные) в `lot_snapshots` в рамках транзакции.
 bool Database::insertLotSnapshots(const QString& itemId, const QVector<Lot>& lots) {
     if (lots.isEmpty()) return true;
 
@@ -317,6 +340,7 @@ bool Database::insertLotSnapshots(const QString& itemId, const QVector<Lot>& lot
 
 // --- Price Snapshots ---
 
+// Сохраняет агрегированный снапшот цены в `price_snapshots`.
 bool Database::insertPriceSnapshot(const PriceSnapshot& snap) {
     QString tsValue = snap.timestamp.isValid()
         ? QString("'%1'").arg(snap.timestamp.toString(Qt::ISODate))
@@ -340,6 +364,7 @@ bool Database::insertPriceSnapshot(const PriceSnapshot& snap) {
     return exec(sql);
 }
 
+// Возвращает агрегированную историю цены за `days` дней для конкретного `itemId`/`quality`.
 QVector<PriceSnapshot> Database::priceHistory(const QString& itemId, int quality, int days) {
     QVector<PriceSnapshot> result;
     QString sql = QString(
@@ -374,6 +399,7 @@ QVector<PriceSnapshot> Database::priceHistory(const QString& itemId, int quality
     return result;
 }
 
+// Возвращает последний (самый свежий по timestamp) снапшот цены для itemId/quality.
 PriceSnapshot Database::latestPriceSnapshot(const QString& itemId, int quality) {
     PriceSnapshot s;
     QString sql = QString(
@@ -405,6 +431,8 @@ PriceSnapshot Database::latestPriceSnapshot(const QString& itemId, int quality) 
 
 // --- Hourly Stats ---
 
+// Обновляет/вставляет агрегат `hourly_stats` для заданного часа.
+// При конфликте усредняет старое и новое по количеству семплов.
 bool Database::upsertHourlyStat(const QString& itemId, int quality, int hour,
                                 qint64 avgPrice, int sampleCount) {
     QString sql = QString(
@@ -423,6 +451,7 @@ bool Database::upsertHourlyStat(const QString& itemId, int quality, int hour,
     return exec(sql);
 }
 
+// Возвращает список (hour -> avg_price) для конкретного itemId/quality.
 QVector<std::pair<int, qint64>> Database::hourlyStats(const QString& itemId, int quality) {
     QVector<std::pair<int, qint64>> result;
     QString sql = QString(
@@ -446,6 +475,7 @@ QVector<std::pair<int, qint64>> Database::hourlyStats(const QString& itemId, int
 
 // --- Alerts ---
 
+// Создаёт алерт и, если SQL успешен, эмитит `alertInserted`.
 bool Database::insertAlert(const Alert& alert) {
     QString sql = QString(
         "INSERT INTO alerts (item_id, quality, alert_type, rating, message) "
@@ -460,6 +490,7 @@ bool Database::insertAlert(const Alert& alert) {
     return ok;
 }
 
+// Возвращает последние `limit` алертов с данными предмета (если он известен).
 QVector<Alert> Database::recentAlerts(int limit) {
     QVector<Alert> result;
     QString sql = QString(
@@ -489,6 +520,8 @@ QVector<Alert> Database::recentAlerts(int limit) {
     return result;
 }
 
+// Возвращает имя предмета из таблицы `items`.
+// Если предмета нет в БД — возвращает входной `itemId`.
 QString Database::itemName(const QString& itemId) {
     QString sql = QString("SELECT name_ru FROM items WHERE id = '%1'").arg(escape(itemId));
     PGresult* res = query(sql);
@@ -504,6 +537,7 @@ QString Database::itemName(const QString& itemId) {
 
 // --- Aggregation helpers ---
 
+// Сколько дней прошло с даты первого price_snapshots для itemId/quality.
 int Database::daysSinceFirstSnapshot(const QString& itemId, int quality) {
     QString sql = QString(
         "SELECT EXTRACT(DAY FROM NOW() - MIN(timestamp))::INT FROM price_snapshots "
@@ -522,6 +556,7 @@ int Database::daysSinceFirstSnapshot(const QString& itemId, int quality) {
     return days;
 }
 
+// Средняя величина `avg_price` за последние `days` дней.
 double Database::overallAvgPrice(const QString& itemId, int quality, int days) {
     QString sql = QString(
         "SELECT AVG(avg_price)::DOUBLE PRECISION FROM price_snapshots "
@@ -543,6 +578,7 @@ double Database::overallAvgPrice(const QString& itemId, int quality, int days) {
 
 // --- Private helpers ---
 
+// Выполняет SQL, который не возвращает набор строк (команды CREATE/INSERT/DELETE).
 bool Database::exec(const QString& sql) {
     if (!m_conn) return false;
     PGresult* res = PQexec(m_conn, sql.toUtf8().constData());
@@ -555,6 +591,7 @@ bool Database::exec(const QString& sql) {
     return ok;
 }
 
+// Выполняет SQL-запрос, который возвращает таблицу строк (SELECT).
 PGresult* Database::query(const QString& sql) {
     if (!m_conn) return nullptr;
     PGresult* res = PQexec(m_conn, sql.toUtf8().constData());
@@ -566,10 +603,12 @@ PGresult* Database::query(const QString& sql) {
     return res;
 }
 
+// Освобождает PGresult (обёртка над `PQclear`).
 void Database::freeResult(PGresult* res) {
     if (res) PQclear(res);
 }
 
+// Экранирует строку для вставки в SQL (заменяет `'` на `''`).
 QString Database::escape(const QString& str) {
     QString result = str;
     result.replace("'", "''");

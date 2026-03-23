@@ -21,6 +21,8 @@ Scheduler::Scheduler(Config* config, Database* db, ApiClient* api,
     , m_detector(detector)
     , m_pollTimer(new QTimer(this))
 {
+    // Планировщик: периодически читает трекинги из БД, запрашивает лоты через API
+    // и передаёт снапшоты в агрегирование/анализ/детектор.
     connect(m_pollTimer, &QTimer::timeout, this, &Scheduler::onPollTimer);
     connect(m_api, &ApiClient::lotsFetched, this, &Scheduler::onLotsFetched);
     connect(m_config, &Config::configChanged, this, [this]() {
@@ -30,6 +32,7 @@ Scheduler::Scheduler(Config* config, Database* db, ApiClient* api,
     });
 }
 
+// Запускает цикл опроса с интервалом из `Config`.
 void Scheduler::start() {
     int intervalMs = m_config->pollIntervalSec() * 1000;
     m_pollTimer->start(intervalMs);
@@ -37,16 +40,19 @@ void Scheduler::start() {
     onPollTimer();
 }
 
+// Останавливает таймер и помечает текущий цикл как завершённый.
 void Scheduler::stop() {
     m_pollTimer->stop();
     m_polling = false;
     LOG_INFO("Scheduler stopped");
 }
 
+// Проверяет, работает ли опрос прямо сейчас.
 bool Scheduler::isRunning() const {
     return m_pollTimer->isActive();
 }
 
+// Стартует новый цикл опроса: формирует очередь запросов лотов по item_id/quality.
 void Scheduler::onPollTimer() {
     if (m_polling) {
         LOG_WARN("Previous poll still running, skipping");
@@ -80,6 +86,7 @@ void Scheduler::onPollTimer() {
     processNextItem();
 }
 
+// Достаёт следующий item из очереди и инициирует API-запрос лотов.
 void Scheduler::processNextItem() {
     if (m_itemQueue.isEmpty()) {
         m_polling = false;
@@ -93,6 +100,8 @@ void Scheduler::processNextItem() {
     m_api->fetchLots(m_currentEntry.itemId, 0, m_config->lotsLimit());
 }
 
+// Приходит результат API для текущего item: сохраняем лоты в БД, агрегируем по качеству,
+// и двигаемся дальше по очереди.
 void Scheduler::onLotsFetched(const QString& itemId, const QVector<Lot>& lots, int total) {
     if (itemId != m_currentEntry.itemId) return;
 
@@ -117,6 +126,8 @@ void Scheduler::onLotsFetched(const QString& itemId, const QVector<Lot>& lots, i
     processNextItem();
 }
 
+// Агрегирует лоты: фильтр выбросов, медиана/среднее/стд. отклонение,
+// сохраняет снапшот в БД и запускает анализ/проверку.
 void Scheduler::aggregateAndAnalyze(const QString& itemId, int quality,
                                      const QVector<Lot>& lots) {
     if (lots.isEmpty()) return;

@@ -11,12 +11,19 @@ enum class AlertType {
 
 struct Alert {
     qint64 id = 0;
+    // itemId: ссылка на предмет (items.id).
     QString itemId;
+    // quality: выбранный quality-tier (или -1, если алерт агрегированный/без tier).
     int quality = -1;
+    // itemName: человекочитаемое имя предмета (может быть пустым).
     QString itemName;
+    // type: тип алерта (BUY/WATCH/CHEAP_LOT).
     AlertType type = AlertType::Watch;
+    // rating: численный рейтинг/оценка (используется в UI).
     double rating = 0.0;
+    // message: текст уведомления.
     QString message;
+    // createdAt: время создания алерта на сервере.
     QDateTime createdAt;
 
     static QString typeToString(AlertType t) {

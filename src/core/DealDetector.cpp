@@ -13,8 +13,11 @@ DealDetector::DealDetector(Database* db, Config* config,
     , m_config(config)
     , m_analyzer(analyzer)
 {
+    // `DealDetector` принимает снапшоты по лотам, проверяет "дешёвые лоты"
+    // и порождает/сохраняет алерты при срабатывании сигналов аналитики.
 }
 
+// Основная точка: обновляет имя предмета и запускает проверки.
 void DealDetector::evaluate(const QString& itemId, int quality,
                             const QVector<Lot>& lots, const PriceSnapshot& snapshot) {
     m_currentItemName = m_db->itemName(itemId);
@@ -22,6 +25,7 @@ void DealDetector::evaluate(const QString& itemId, int quality,
     checkAnalysisSignal(itemId, quality, snapshot);
 }
 
+// Находит лоты, которые потенциально прибыльны после комиссии.
 void DealDetector::checkCheapLots(const QString& itemId, int quality,
                                    const QVector<Lot>& lots,
                                    const PriceSnapshot& snapshot) {
@@ -62,6 +66,7 @@ void DealDetector::checkCheapLots(const QString& itemId, int quality,
     }
 }
 
+// Переводит рейтинг из `PriceAnalyzer` в пользовательские уведомления (BUY/WATCH).
 void DealDetector::checkAnalysisSignal(const QString& itemId, int quality,
                                         const PriceSnapshot& snapshot) {
     AnalysisResult result = m_analyzer->lastResult(itemId, quality);

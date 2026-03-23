@@ -15,8 +15,11 @@ ItemCatalogLoader::ItemCatalogLoader(Database* db, QObject* parent)
     , m_db(db)
     , m_nam(new QNetworkAccessManager(this))
 {
+    // Загрузчик каталога предметов: читает JSON (локально или через GitHub),
+    // парсит его в `Item` и сохраняет/обновляет через `Database`.
 }
 
+// Парсит один JSON-файл предмета в структуру `Item`.
 Item ItemCatalogLoader::parseItemJson(const QByteArray& json) {
     Item item;
     QJsonDocument doc = QJsonDocument::fromJson(json);
@@ -37,6 +40,8 @@ Item ItemCatalogLoader::parseItemJson(const QByteArray& json) {
     return item;
 }
 
+// Считывает все `.json` файлы предметов из директории, исключая `_variants`,
+// и возвращает список валидных `Item`.
 QVector<Item> ItemCatalogLoader::parseItemFiles(const QString& dirPath) {
     QVector<Item> items;
     QDirIterator it(dirPath, {"*.json"}, QDir::Files, QDirIterator::Subdirectories);
@@ -60,6 +65,7 @@ QVector<Item> ItemCatalogLoader::parseItemFiles(const QString& dirPath) {
     return items;
 }
 
+// Импортирует каталог предметов из локальной директории в БД порциями.
 void ItemCatalogLoader::loadFromLocalDirectory(const QString& dirPath) {
     emit loadingStarted();
 
@@ -81,11 +87,13 @@ void ItemCatalogLoader::loadFromLocalDirectory(const QString& dirPath) {
     emit loadingFinished(items.size());
 }
 
+// Начинает загрузку каталога предметов с GitHub (через дерево файлов и поштучное скачивание).
 void ItemCatalogLoader::downloadFromGitHub() {
     emit loadingStarted();
     fetchGitHubTree();
 }
 
+// Запрашивает дерево репозитория GitHub и собирает список путей до нужных item-файлов.
 void ItemCatalogLoader::fetchGitHubTree() {
     QUrl url("https://api.github.com/repos/EXBO-Studio/stalcraft-database/git/trees/main?recursive=1");
     QNetworkRequest req(url);
@@ -129,6 +137,7 @@ void ItemCatalogLoader::fetchGitHubTree() {
     });
 }
 
+// Скачивает один файл JSON предмета по URL и накапливает результаты.
 void ItemCatalogLoader::fetchItemFile(const QString& url, int index, int total) {
     QNetworkRequest req{QUrl(url)};
     req.setRawHeader("User-Agent", "StalcraftBot");

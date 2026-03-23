@@ -26,8 +26,12 @@ ApiClient::ApiClient(Config* config, QObject* parent)
     , m_config(config)
     , m_nam(new QNetworkAccessManager(this))
 {
+    // `ApiClient` хранит ссылку на `Config` и использует QNetworkAccessManager
+    // для выполнения HTTP запросов к eAPI Stalcraft.
 }
 
+// Собирает `QNetworkRequest` для конкретного пути и параметров запроса.
+// Берёт `apiBaseUrl` и Bearer-токен из `Config`.
 QNetworkRequest ApiClient::makeRequest(const QString& path, const QUrlQuery& params) const {
     QUrl url(m_config->apiBaseUrl() + path); //сборка ссылки для API
     if (!params.isEmpty()) {

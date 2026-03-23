@@ -19,10 +19,12 @@ LogWidget::LogWidget(Database* db, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
 {
+    // Настраиваем таблицу логов и сразу наполняем её.
     setupUi();
     refresh();
 }
 
+// Инициализирует UI: фильтр, кнопка обновления и таблица уведомлений.
 void LogWidget::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
@@ -61,6 +63,7 @@ void LogWidget::setupUi() {
     connect(m_filterCombo, &QComboBox::currentIndexChanged, this, &LogWidget::refresh);
 }
 
+// Добавляет новое уведомление в таблицу (используется сигналом `DealDetector`).
 void LogWidget::addAlert(const Alert& alert) {
     int row = 0;
     m_table->insertRow(row);
@@ -97,6 +100,7 @@ void LogWidget::addAlert(const Alert& alert) {
 #endif
 }
 
+// Перезагружает список уведомлений из БД с учётом выбранного фильтра.
 void LogWidget::refresh() {
     auto alerts = m_db->recentAlerts(500);
     QString filter = m_filterCombo->currentData().toString();

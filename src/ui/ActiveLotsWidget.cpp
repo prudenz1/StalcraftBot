@@ -13,11 +13,13 @@ ActiveLotsWidget::ActiveLotsWidget(Database* db, ApiClient* api, QWidget* parent
     , m_db(db)
     , m_api(api)
 {
+    // Настраиваем UI и подписываемся на сигнал API о загрузке лотов.
     setupUi();
 
     connect(m_api, &ApiClient::lotsFetched, this, &ActiveLotsWidget::onLotsReceived);
 }
 
+// Формирует элементы интерфейса: список предметов, кнопка обновления, таблица лотов.
 void ActiveLotsWidget::setupUi() {
     auto* layout = new QVBoxLayout(this);
 
@@ -58,6 +60,7 @@ void ActiveLotsWidget::setupUi() {
     refreshItemList();
 }
 
+// Перезагружает список отслеживаемых предметов из БД.
 void ActiveLotsWidget::refreshItemList() {
     QString currentKey = m_itemCombo->currentData().toString();
     m_itemCombo->blockSignals(true);
@@ -77,6 +80,7 @@ void ActiveLotsWidget::refreshItemList() {
     m_itemCombo->blockSignals(false);
 }
 
+// Реагирует на выбор предмета в комбобоксе и либо показывает кэш, либо запрашивает у API.
 void ActiveLotsWidget::onItemSelected() {
     QString data = m_itemCombo->currentData().toString();
     if (data.isEmpty()) return;
@@ -93,6 +97,7 @@ void ActiveLotsWidget::onItemSelected() {
     }
 }
 
+// Жестко запрашивает лоты для текущего выбранного предмета (без кэш-ветвления).
 void ActiveLotsWidget::onRefreshClicked() {
     QString data = m_itemCombo->currentData().toString();
     if (data.isEmpty()) return;
@@ -104,6 +109,7 @@ void ActiveLotsWidget::onRefreshClicked() {
     m_statusLabel->setText(QString::fromUtf8("Загрузка..."));
 }
 
+// Обработчик результата API: сохраняет кэш и, если предмет всё ещё выбран, перерисовывает таблицу.
 void ActiveLotsWidget::onLotsReceived(const QString& itemId, const QVector<Lot>& lots, int total) {
     m_lotsCache[itemId] = lots;
     m_totalsCache[itemId] = total;
@@ -116,6 +122,7 @@ void ActiveLotsWidget::onLotsReceived(const QString& itemId, const QVector<Lot>&
     }
 }
 
+// Заполняет таблицу лотами: фильтрация по качеству (если задано), сортировка цен и расчёт медианы.
 void ActiveLotsWidget::displayLots(const QString& itemId, int quality) {
     const auto& allLots = m_lotsCache[itemId];
 

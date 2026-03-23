@@ -19,6 +19,7 @@
 static const int HISTORY_PAGE_SIZE = 200;
 static const int HISTORY_THROTTLE_MS = 302;
 
+// Инициализирует виджет и подписывает UI на события загрузчика каталога.
 ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
@@ -53,6 +54,7 @@ ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* pare
     });
 }
 
+// Собирает интерфейс: панель загрузки каталога, поиск и список отслеживаемых предметов.
 void ItemManagerWidget::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -125,16 +127,19 @@ void ItemManagerWidget::setupUi() {
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &ItemManagerWidget::onSearch);
 }
 
+// Запускает загрузку каталога предметов из внешнего источника.
 void ItemManagerWidget::onDownloadCatalog() {
     m_catalogLoader->downloadFromGitHub();
 }
 
+// Обрабатывает ввод поиска и обновляет таблицу результатов.
 void ItemManagerWidget::onSearch() {
     QString query = m_searchEdit->text().trimmed();
     if (query.isEmpty()) return;
     populateSearchResults(query);
 }
 
+// Заполняет таблицу найденными предметами и кнопками управления отслеживанием.
 void ItemManagerWidget::populateSearchResults(const QString& query) {
     auto items = m_db->searchItems(query);
     m_searchTable->setRowCount(items.size());
@@ -167,6 +172,7 @@ void ItemManagerWidget::populateSearchResults(const QString& query) {
     }
 }
 
+// Переключает отслеживание предмета; для предметов с качеством показывает выбор качества.
 void ItemManagerWidget::onToggleTracking(int row) {
     auto* btn = qobject_cast<QPushButton*>(m_searchTable->cellWidget(row, 3));
     if (!btn) return;
@@ -258,12 +264,14 @@ void ItemManagerWidget::onToggleTracking(int row) {
     }
 }
 
+// Удаляет конкретную запись отслеживания по ее ID.
 void ItemManagerWidget::onRemoveTracking(int trackingId) {
     m_db->removeTracking(trackingId);
     refreshTrackedList();
     emit itemTrackingChanged();
 }
 
+// Перечитывает отслеживаемые предметы из БД и заново строит таблицу.
 void ItemManagerWidget::refreshTrackedList() {
     auto items = m_db->trackedItems();
     m_trackedTable->setRowCount(items.size());
@@ -286,6 +294,7 @@ void ItemManagerWidget::refreshTrackedList() {
 
 // --- Price history import ---
 
+// Инициализирует полную загрузку истории цен и запускает первую страницу.
 void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId,
                                                const QVector<int>& qualities) {
     if (m_pendingHistory.contains(itemId)) {
@@ -309,18 +318,22 @@ void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId,
     fetchHistoryPage(itemId, 0);
 }
 
+// Запрашивает страницу истории цен у API с указанным смещением.
 void ItemManagerWidget::fetchHistoryPage(const QString& itemId, int offset) {
     LOG_INFO("Fetching price history page for {}, offset={}", itemId.toStdString(), offset);
     m_api->fetchPriceHistory(itemId, offset, HISTORY_PAGE_SIZE);
 }
 
+// Планирует следующий запрос истории с небольшим троттлингом.
 void ItemManagerWidget::scheduleNextHistoryPage(const QString& itemId, int offset) {
-    QTimer::singleShot(HISTORY_THROTTLE_MS, this, [this, itemId, offset]() {
+    QTimer::singleShot(HISTORY_THROTTLE_MS, this, 
+        [this, itemId, offset]() {
         if (m_pendingHistory.contains(itemId))
             fetchHistoryPage(itemId, offset);
     });
 }
 
+// Принимает страницу истории, обновляет прогресс и завершает импорт при достижении конца.
 void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
                                               const QVector<PriceHistoryEntry>& entries,
                                               int total) {
@@ -350,6 +363,7 @@ void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
     }
 }
 
+// Фильтрует историю по качеству и сохраняет агрегаты по каждому часу в БД.
 void ItemManagerWidget::storeHistoryEntries(const QString& itemId, int quality,
                                             const QVector<PriceHistoryEntry>& allEntries) {
     if (allEntries.isEmpty()) return;

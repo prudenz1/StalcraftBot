@@ -11,12 +11,16 @@ PriceAnalyzer::PriceAnalyzer(Database* db, Config* config, QObject* parent)
     , m_db(db)
     , m_config(config)
 {
+    // `PriceAnalyzer` вычисляет статистику/рейтинги по истории цены
+    // и отдаёт результат через `analysisCompleted`.
 }
 
+// Возвращает сохранённый результат анализа (если он уже был рассчитан).
 AnalysisResult PriceAnalyzer::lastResult(const QString& itemId, int quality) const {
     return m_lastResults.value({itemId, quality});
 }
 
+// Анализирует текущий снапшот: уровень данных, Z-Score, тренд, коэффициенты и сигнал.
 AnalysisResult PriceAnalyzer::analyze(const QString& itemId, int quality,
                                        const PriceSnapshot& current) {
     AnalysisResult result;
@@ -86,12 +90,14 @@ AnalysisResult PriceAnalyzer::analyze(const QString& itemId, int quality,
     return result;
 }
 
+// Примерно классифицирует объём доступных данных по дням.
 DataLevel PriceAnalyzer::determineLevel(int daysOfData) const {
     if (daysOfData < 7) return DataLevel::Level1;
     if (daysOfData <= 30) return DataLevel::Level2;
     return DataLevel::Level3;
 }
 
+// Оценивает направление тренда по истории средних цен.
 Trend PriceAnalyzer::determineTrend(const QVector<PriceSnapshot>& history) const {
     if (history.size() < 3) return Trend::Flat;
 
@@ -121,6 +127,7 @@ Trend PriceAnalyzer::determineTrend(const QVector<PriceSnapshot>& history) const
     return Trend::Flat;
 }
 
+// Переводит направление тренда в множитель рейтинга.
 double PriceAnalyzer::trendCoefficient(Trend t) const {
     switch (t) {
         case Trend::Down: return 1.2;
@@ -130,6 +137,7 @@ double PriceAnalyzer::trendCoefficient(Trend t) const {
     return 1.0;
 }
 
+// Вспомогательная функция: получает "сырой" коэффициент по текущему часу из `hourly_stats`.
 double PriceAnalyzer::computeTimeCoeffRaw(const QString& itemId, int quality,
                                            qint64 overallAvg) const {
     if (overallAvg <= 0) return 1.0;
@@ -144,6 +152,7 @@ double PriceAnalyzer::computeTimeCoeffRaw(const QString& itemId, int quality,
     return 1.0;
 }
 
+// Нормализует коэффициент между минимумом/максимумом, чтобы он не доминировал рейтинг.
 double PriceAnalyzer::normalizeTimeCoeff(double raw, double minCoeff, double maxCoeff) const {
     double spread = maxCoeff - minCoeff;
     if (spread < 0.001) return 1.0;
@@ -152,6 +161,7 @@ double PriceAnalyzer::normalizeTimeCoeff(double raw, double minCoeff, double max
     return std::clamp(norm, 0.85, 1.15);
 }
 
+// Переводит итоговый рейтинг в категорию сигнала (buy/watch/none) в зависимости от уровня данных.
 Signal PriceAnalyzer::determineSignal(double rating, DataLevel level) const {
     double watchThreshold, buyThreshold;
     if (level == DataLevel::Level1) {

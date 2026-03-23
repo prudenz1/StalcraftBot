@@ -10,10 +10,12 @@ SettingsWidget::SettingsWidget(Config* config, QWidget* parent)
     : QWidget(parent)
     , m_config(config)
 {
+    // Создаём UI и сразу подгружаем значения из `Config` (QSettings).
     setupUi();
     loadFromConfig();
 }
 
+// Рисует форму настроек: API, планировщик, фильтры аукциона и параметры БД.
 void SettingsWidget::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -125,6 +127,7 @@ void SettingsWidget::setupUi() {
     });
 }
 
+// Заполняет поля формы текущими значениями конфигурации.
 void SettingsWidget::loadFromConfig() {
     m_regionCombo->setCurrentText(m_config->region());
     m_bearerTokenEdit->clear();
@@ -147,6 +150,7 @@ void SettingsWidget::loadFromConfig() {
     m_dbPasswordEdit->setText(m_config->dbPassword());
 }
 
+// Сохраняет значения из формы в `Config` и перезагружает отображение.
 void SettingsWidget::saveToConfig() {
     m_config->setRegion(m_regionCombo->currentText());
     m_config->setPollIntervalSec(m_pollIntervalSpin->value());

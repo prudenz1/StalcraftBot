@@ -7,6 +7,7 @@
 
 std::shared_ptr<spdlog::logger> Logger::s_logger;
 
+// Инициализирует spdlog: логирует и в консоль, и в rotating файл.
 void Logger::init(const std::string& logFile) {
 #ifdef _WIN32
     // Иначе UTF-8 из логов отображается в консоли как «╨Ш╤Б╤В╨╛╤А╨╕╤П...»
@@ -31,6 +32,7 @@ void Logger::init(const std::string& logFile) {
     LOG_INFO("Logger initialized");
 }
 
+// Возвращает текущий глобальный логгер.
 std::shared_ptr<spdlog::logger>& Logger::get() {
     return s_logger;
 }
