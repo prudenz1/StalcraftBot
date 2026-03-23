@@ -236,13 +236,12 @@ void ItemManagerWidget::onToggleTracking(int row) {
         }
         if (selectedQualities.isEmpty()) return;
 
-        for (int quality : selectedQualities) {
+        for (int quality : selectedQualities)
             m_db->addTracking(itemId, quality);
-            fetchFullPriceHistory(itemId, quality);
-        }
         btn->setProperty("hasTracking", true);
         refreshTrackedList();
         emit itemTrackingChanged();
+        fetchFullPriceHistory(itemId, selectedQualities);
     } else {
         if (hasTrack) {
             m_db->removeAllTracking(itemId);
@@ -252,7 +251,7 @@ void ItemManagerWidget::onToggleTracking(int row) {
             m_db->addTracking(itemId, -1);
             btn->setProperty("hasTracking", true);
             btn->setText(QString::fromUtf8("Убрать"));
-            fetchFullPriceHistory(itemId, -1);
+            fetchFullPriceHistory(itemId, {-1});
         }
         refreshTrackedList();
         emit itemTrackingChanged();
@@ -287,10 +286,19 @@ void ItemManagerWidget::refreshTrackedList() {
 
 // --- Price history import ---
 
-void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId, int quality) {
+void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId,
+                                               const QVector<int>& qualities) {
+    if (m_pendingHistory.contains(itemId)) {
+        for (int q : qualities) {
+            if (!m_importQualities[itemId].contains(q))
+                m_importQualities[itemId].append(q);
+        }
+        return;
+    }
+
     m_pendingHistory[itemId].clear();
     m_historyTotal[itemId] = 0;
-    m_importQuality[itemId] = quality;
+    m_importQualities[itemId] = qualities;
 
     m_historyStatus->setVisible(true);
     m_historyStatus->setText(QString::fromUtf8("Загрузка истории цен для %1...").arg(itemId));
@@ -330,11 +338,13 @@ void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
         scheduleNextHistoryPage(itemId, fetched);
     } else {
         LOG_INFO("Price history complete for {}: {} entries", itemId.toStdString(), fetched);
-        int quality = m_importQuality.value(itemId, -1);
-        storeHistoryEntries(itemId, quality, m_pendingHistory[itemId]);
+        QVector<int> qualities = m_importQualities.value(itemId, {-1});
+        const auto& allEntries = m_pendingHistory[itemId];
+        for (int quality : qualities)
+            storeHistoryEntries(itemId, quality, allEntries);
         m_pendingHistory.remove(itemId);
         m_historyTotal.remove(itemId);
-        m_importQuality.remove(itemId);
+        m_importQualities.remove(itemId);
         m_historyStatus->setText(
             QString::fromUtf8("История %1 загружена: %2 записей").arg(itemId).arg(fetched));
     }

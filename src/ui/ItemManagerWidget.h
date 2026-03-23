@@ -34,7 +34,7 @@ private slots:
 private:
     void setupUi();
     void populateSearchResults(const QString& query);
-    void fetchFullPriceHistory(const QString& itemId, int quality);
+    void fetchFullPriceHistory(const QString& itemId, const QVector<int>& qualities);
     void fetchHistoryPage(const QString& itemId, int offset);
     void scheduleNextHistoryPage(const QString& itemId, int offset);
     void onHistoryPageReceived(const QString& itemId,
@@ -48,7 +48,7 @@ private:
 
     QMap<QString, QVector<PriceHistoryEntry>> m_pendingHistory;
     QMap<QString, int> m_historyTotal;
-    QMap<QString, int> m_importQuality;
+    QMap<QString, QVector<int>> m_importQualities;
 
     QPushButton* m_downloadBtn = nullptr;
     QProgressBar* m_progressBar = nullptr;
