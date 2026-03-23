@@ -275,7 +275,8 @@ void ItemManagerWidget::fetchHistoryPage(const QString& itemId, int offset) {
 
 /// Следующая страница истории после паузы kHistoryThrottleIntervalMs; не вызывать fetch, если загрузка уже снята (m_pendingHistory).
 void ItemManagerWidget::scheduleNextHistoryPage(const QString& itemId, int offset) {
-    QTimer::singleShot(kHistoryThrottleIntervalMs, this, [this, itemId, offset]() {
+    QTimer::singleShot(kHistoryThrottleIntervalMs, this, 
+        [this, itemId, offset]() {
         if (m_pendingHistory.contains(itemId))
             fetchHistoryPage(itemId, offset);
     });

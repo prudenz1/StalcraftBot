@@ -34,8 +34,7 @@ private:
     void populateSearchResults(const QString& query);
     void fetchFullPriceHistory(const QString& itemId);
     void fetchHistoryPage(const QString& itemId, int offset);
-    /// Следующая страница истории после паузы (троттлинг ~199 запр./мин).
-    void scheduleNextHistoryPage(const QString& itemId, int offset);
+    void scheduleNextHistoryPage(const QString& itemId, int offset); /// Следующая страница истории после паузы (троттлинг ~199 запр./мин).
     void onHistoryPageReceived(const QString& itemId, const QVector<PriceHistoryEntry>& entries, int total);
     void storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries);
 
