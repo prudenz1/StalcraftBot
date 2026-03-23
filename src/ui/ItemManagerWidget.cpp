@@ -22,7 +22,11 @@ static constexpr int kPaginationOverlapWarnSec = 120;
 static constexpr int kDuplicatePrefixRows = 5;
 static constexpr int kMaxDuplicateRetries = 3;
 static constexpr int kDuplicateRetryDelayMs = 400;
+/// Минимальная пауза перед следующим запросом страницы истории. Цель — не более 199 запросов в минуту:
+/// ceil(60000 / 199) = 302 мс между стартами при равномерной сетке (строго меньше 200 запр./мин).
+static constexpr int kHistoryThrottleIntervalMs = 302;
 
+/// Сравнивает две записи истории: совпадают ли цена и момент времени (по секундам UTC).
 static bool sameTimePrice(const PriceHistoryEntry& a, const PriceHistoryEntry& b) {
     return a.price == b.price && a.time.isValid() && b.time.isValid()
         && a.time.toSecsSinceEpoch() == b.time.toSecsSinceEpoch();
@@ -39,6 +43,7 @@ static bool isDuplicateRepeatOfFirstPage(const QVector<PriceHistoryEntry>& newPa
     return true;
 }
 
+/// Находит минимальную и максимальную дату среди валидных времён записей на странице.
 static void historyPageMinMax(const QVector<PriceHistoryEntry>& entries,
                               QDateTime* outMin, QDateTime* outMax) {
     *outMin = *outMax = QDateTime();
@@ -57,6 +62,7 @@ static void historyPageMinMax(const QVector<PriceHistoryEntry>& entries,
 
 } // namespace
 
+/// Создаёт виджет управления предметами: БД, API, загрузчик каталога, UI и связи сигналов.
 ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* parent)
     : QWidget(parent)
     , m_db(db)
@@ -91,6 +97,7 @@ ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* pare
     });
 }
 
+/// Собирает разметку: каталог, поиск, таблицы результатов и отслеживаемых предметов, обработчики кнопок.
 void ItemManagerWidget::setupUi() {
     auto* mainLayout = new QVBoxLayout(this);
 
@@ -162,16 +169,19 @@ void ItemManagerWidget::setupUi() {
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &ItemManagerWidget::onSearch);
 }
 
+/// Запускает загрузку каталога предметов с GitHub через ItemCatalogLoader.
 void ItemManagerWidget::onDownloadCatalog() {
     m_catalogLoader->downloadFromGitHub();
 }
 
+/// Обрабатывает поиск: при непустом запросе заполняет таблицу результатов из БД.
 void ItemManagerWidget::onSearch() {
     QString query = m_searchEdit->text().trimmed();
     if (query.isEmpty()) return;
     populateSearchResults(query);
 }
 
+/// Выводит в таблицу поиска найденные предметы и кнопки «Отслеживать» / «Убрать».
 void ItemManagerWidget::populateSearchResults(const QString& query) {
     auto items = m_db->searchItems(query);
     m_searchTable->setRowCount(items.size());
@@ -196,6 +206,7 @@ void ItemManagerWidget::populateSearchResults(const QString& query) {
     }
 }
 
+/// Переключает отслеживание предмета по строке таблицы поиска; при включении тянет полную историю цен.
 void ItemManagerWidget::onToggleTracking(int row) {
     auto* btn = qobject_cast<QPushButton*>(m_searchTable->cellWidget(row, 3));
     if (!btn) return;
@@ -216,6 +227,7 @@ void ItemManagerWidget::onToggleTracking(int row) {
     }
 }
 
+/// Обновляет таблицу отслеживаемых предметов из БД и кнопки «Убрать».
 void ItemManagerWidget::refreshTrackedList() {
     auto items = m_db->trackedItems();
     m_trackedTable->setRowCount(items.size());
@@ -239,6 +251,7 @@ void ItemManagerWidget::refreshTrackedList() {
 
 // --- Price history import ---
 
+/// Сбрасывает состояние загрузки истории для предмета и начинает постраничную выгрузку с offset 0.
 void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId) {
     m_pendingHistory[itemId].clear();
     m_historyTotal[itemId] = 0;
@@ -254,11 +267,21 @@ void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId) {
     fetchHistoryPage(itemId, 0);
 }
 
+/// Запрашивает у API одну страницу истории цен (размер HISTORY_PAGE_SIZE) с заданным смещением.
 void ItemManagerWidget::fetchHistoryPage(const QString& itemId, int offset) {
     LOG_INFO("Fetching price history page for {}, offset={}", itemId.toStdString(), offset);
     m_api->fetchPriceHistory(itemId, offset, HISTORY_PAGE_SIZE);
 }
 
+/// Следующая страница истории после паузы kHistoryThrottleIntervalMs; не вызывать fetch, если загрузка уже снята (m_pendingHistory).
+void ItemManagerWidget::scheduleNextHistoryPage(const QString& itemId, int offset) {
+    QTimer::singleShot(kHistoryThrottleIntervalMs, this, [this, itemId, offset]() {
+        if (m_pendingHistory.contains(itemId))
+            fetchHistoryPage(itemId, offset);
+    });
+}
+
+/// Склеивает страницы истории, обрабатывает дубликаты и перекрытия пагинации, по завершении сохраняет в БД.
 void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
                                               const QVector<PriceHistoryEntry>& entries,
                                               int total) {
@@ -344,7 +367,7 @@ void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
     }
 
     if (fetchMore) {
-        fetchHistoryPage(itemId, fetched);
+        scheduleNextHistoryPage(itemId, fetched);
     } else {
         LOG_INFO("Price history complete for {}: {} entries", itemId.toStdString(), fetched);
         storeHistoryEntries(itemId, m_pendingHistory[itemId]);
@@ -357,6 +380,7 @@ void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
     }
 }
 
+/// Агрегирует сырые сделки по часам, пишет снимки цен и почасовую статистику в БД.
 void ItemManagerWidget::storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries) {
     if (allEntries.isEmpty()) return;
 
