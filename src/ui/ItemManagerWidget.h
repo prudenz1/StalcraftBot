@@ -34,7 +34,7 @@ private:
     void populateSearchResults(const QString& query);
     void fetchFullPriceHistory(const QString& itemId);
     void fetchHistoryPage(const QString& itemId, int offset);
-    void scheduleNextHistoryPage(const QString& itemId, int offset); /// Следующая страница истории после паузы (троттлинг ~199 запр./мин).
+    void scheduleNextHistoryPage(const QString& itemId, int offset);
     void onHistoryPageReceived(const QString& itemId, const QVector<PriceHistoryEntry>& entries, int total);
     void storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries);
 
@@ -44,9 +44,6 @@ private:
 
     QMap<QString, QVector<PriceHistoryEntry>> m_pendingHistory;
     QMap<QString, int> m_historyTotal;
-    /// Счётчик повторов запроса той же страницы при детекте дубликата (глюки API).
-    QMap<QString, int> m_historyDuplicateRetries;
-    QMap<QString, QDateTime> m_historyLastPageOldest;
 
     QPushButton* m_downloadBtn = nullptr;
     QProgressBar* m_progressBar = nullptr;

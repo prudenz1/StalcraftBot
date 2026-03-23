@@ -7,60 +7,16 @@
 #include <QHeaderView>
 #include <QSplitter>
 #include <QMessageBox>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 
-#include <QDateTime>
-#include <QTimer>
 
-namespace {
 
-static const int HISTORY_PAGE_SIZE = 200;
-static constexpr int kPaginationOverlapWarnSec = 120;
-static constexpr int kDuplicatePrefixRows = 5;
-static constexpr int kMaxDuplicateRetries = 3;
-static constexpr int kDuplicateRetryDelayMs = 400;
-/// Минимальная пауза перед следующим запросом страницы истории. Цель — не более 199 запросов в минуту:
-/// ceil(60000 / 199) = 302 мс между стартами при равномерной сетке (строго меньше 200 запр./мин).
-static constexpr int kHistoryThrottleIntervalMs = 302;
-
-/// Сравнивает две записи истории: совпадают ли цена и момент времени (по секундам UTC).
-static bool sameTimePrice(const PriceHistoryEntry& a, const PriceHistoryEntry& b) {
-    return a.price == b.price && a.time.isValid() && b.time.isValid()
-        && a.time.toSecsSinceEpoch() == b.time.toSecsSinceEpoch();
-}
-
-/// Первые k строк совпадают с началом уже загруженной первой страницы — ответ снова «как offset=0».
-static bool isDuplicateRepeatOfFirstPage(const QVector<PriceHistoryEntry>& newPage,
-                                         const QVector<PriceHistoryEntry>& pending) {
-    if (pending.size() < HISTORY_PAGE_SIZE || newPage.size() < kDuplicatePrefixRows)
-        return false;
-    for (int i = 0; i < kDuplicatePrefixRows; ++i) {
-        if (!sameTimePrice(newPage[i], pending[i])) return false;
-    }
-    return true;
-}
-
-/// Находит минимальную и максимальную дату среди валидных времён записей на странице.
-static void historyPageMinMax(const QVector<PriceHistoryEntry>& entries,
-                              QDateTime* outMin, QDateTime* outMax) {
-    *outMin = *outMax = QDateTime();
-    bool any = false;
-    for (const auto& e : entries) {
-        if (!e.time.isValid()) continue;
-        if (!any) {
-            *outMin = *outMax = e.time;
-            any = true;
-        } else {
-            if (e.time < *outMin) *outMin = e.time;
-            if (e.time > *outMax) *outMax = e.time;
-        }
-    }
-}
-
-} // namespace
+static const int HISTORY_PAGE_SIZE = 200;   // Кол-во записей истории за один запрос к API
+static const int HISTORY_THROTTLE_MS = 302; // Пауза между запросами страниц (~200 запр./мин)
 
 /// Создаёт виджет управления предметами: БД, API, загрузчик каталога, UI и связи сигналов.
 ItemManagerWidget::ItemManagerWidget(Database* db, ApiClient* api, QWidget* parent)
@@ -251,12 +207,11 @@ void ItemManagerWidget::refreshTrackedList() {
 
 // --- Price history import ---
 
-/// Сбрасывает состояние загрузки истории для предмета и начинает постраничную выгрузку с offset 0.
+// Начинает загрузку всей доступной истории цен предмета с API.
+// Сбрасывает накопитель и запрашивает первую страницу (offset=0).
 void ItemManagerWidget::fetchFullPriceHistory(const QString& itemId) {
     m_pendingHistory[itemId].clear();
     m_historyTotal[itemId] = 0;
-    m_historyDuplicateRetries.remove(itemId);
-    m_historyLastPageOldest.remove(itemId);
 
     m_historyStatus->setVisible(true);
     m_historyStatus->setText(QString::fromUtf8("Загрузка истории цен для %1...").arg(itemId));
@@ -273,119 +228,48 @@ void ItemManagerWidget::fetchHistoryPage(const QString& itemId, int offset) {
     m_api->fetchPriceHistory(itemId, offset, HISTORY_PAGE_SIZE);
 }
 
-/// Следующая страница истории после паузы kHistoryThrottleIntervalMs; не вызывать fetch, если загрузка уже снята (m_pendingHistory).
+// Планирует запрос следующей страницы через HISTORY_THROTTLE_MS мс (защита от rate limit API).
 void ItemManagerWidget::scheduleNextHistoryPage(const QString& itemId, int offset) {
-    QTimer::singleShot(kHistoryThrottleIntervalMs, this, 
-        [this, itemId, offset]() {
+    QTimer::singleShot(HISTORY_THROTTLE_MS, this, [this, itemId, offset]() {
         if (m_pendingHistory.contains(itemId))
             fetchHistoryPage(itemId, offset);
     });
 }
 
-/// Склеивает страницы истории, обрабатывает дубликаты и перекрытия пагинации, по завершении сохраняет в БД.
+// Вызывается при получении очередной страницы истории от API.
+// Накапливает записи в m_pendingHistory; если ещё не все — запрашивает следующую страницу
+// через таймер. Когда все записи получены — передаёт их в storeHistoryEntries для записи в БД.
 void ItemManagerWidget::onHistoryPageReceived(const QString& itemId,
                                               const QVector<PriceHistoryEntry>& entries,
                                               int total) {
     if (!m_pendingHistory.contains(itemId)) return;
 
-    const int pageOffset = m_pendingHistory[itemId].size();
-
     m_historyTotal[itemId] = total;
-
-    QDateTime pageMin, pageMax;
-    historyPageMinMax(entries, &pageMin, &pageMax);
-
-    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
-    for (const auto& e : entries) {
-        if (e.time.isValid() && e.time > nowUtc.addDays(1)) {
-            LOG_WARN("История {}: сделка с датой в будущем ({}) — возможна ошибка API/часового пояса",
-                     itemId.toStdString(), e.time.toString(Qt::ISODate).toStdString());
-            break;
-        }
-    }
-
-    bool rejectDuplicatePage = false;
-    if (pageOffset > 0 && !entries.isEmpty()
-        && isDuplicateRepeatOfFirstPage(entries, m_pendingHistory[itemId])) {
-        int n = m_historyDuplicateRetries.value(itemId, 0);
-        if (n < kMaxDuplicateRetries) {
-            m_historyDuplicateRetries[itemId] = n + 1;
-            LOG_WARN(
-                "История {}: offset={} — повтор первой страницы (первые {} сделок); "
-                "повтор запроса {}/{} через {} мс.",
-                itemId.toStdString(), pageOffset, kDuplicatePrefixRows, n + 1, kMaxDuplicateRetries,
-                kDuplicateRetryDelayMs);
-            QTimer::singleShot(kDuplicateRetryDelayMs, this, [this, itemId, pageOffset]() {
-                if (m_pendingHistory.contains(itemId))
-                    fetchHistoryPage(itemId, pageOffset);
-            });
-            return;
-        }
-        LOG_WARN(
-            "История {}: offset={} — после {} повторов всё ещё дубликат первой страницы; загрузка остановлена.",
-            itemId.toStdString(), pageOffset, kMaxDuplicateRetries);
-        rejectDuplicatePage = true;
-    } else if (pageOffset > 0) {
-        m_historyDuplicateRetries[itemId] = 0;
-    }
-    if (!rejectDuplicatePage && pageOffset > 0 && pageMin.isValid() && pageMax.isValid()
-        && m_historyLastPageOldest.contains(itemId)
-        && pageMax > m_historyLastPageOldest[itemId].addSecs(kPaginationOverlapWarnSec)) {
-        LOG_WARN(
-            "История {}: offset={} — «новейшая» сделка на странице ({}) сильно новее самой старой "
-            "на предыдущей ({}), пагинация может быть неконсистентной.",
-            itemId.toStdString(),
-            pageOffset,
-            pageMax.toString(Qt::ISODate).toStdString(),
-            m_historyLastPageOldest[itemId].toString(Qt::ISODate).toStdString());
-    }
-
-    if (!rejectDuplicatePage) {
-        m_pendingHistory[itemId].append(entries);
-        if (pageMin.isValid()) {
-            m_historyLastPageOldest[itemId] = pageMin;
-        }
-    }
+    m_pendingHistory[itemId].append(entries);
 
     int fetched = m_pendingHistory[itemId].size();
-    QString totalLabel = (total > 0) ? QString::number(total)
-                                     : QString::fromUtf8("—");
     m_historyStatus->setText(
         QString::fromUtf8("История %1: %2 / %3 записей...")
-            .arg(itemId).arg(fetched).arg(totalLabel));
+            .arg(itemId).arg(fetched).arg(total));
 
-    // total иногда отражает не всю историю (например только недавние сделки). Старое условие
-    // fetched < total обрывало загрузку при полной странице, хотя дальше по offset данные есть.
-    // При полной странице всегда запрашиваем следующую; конец — пустой ответ или неполная
-    // страница при fetched >= total (лишний пустой запрос при «ровном» total допустим).
-    bool fetchMore = false;
-    if (!rejectDuplicatePage && !entries.isEmpty()) {
-        if (entries.size() >= HISTORY_PAGE_SIZE) {
-            fetchMore = true;
-        } else if (total > 0 && fetched < total) {
-            fetchMore = true;
-        }
-    }
-
-    if (fetchMore) {
+    if (fetched < total && !entries.isEmpty()) {
         scheduleNextHistoryPage(itemId, fetched);
     } else {
         LOG_INFO("Price history complete for {}: {} entries", itemId.toStdString(), fetched);
         storeHistoryEntries(itemId, m_pendingHistory[itemId]);
         m_pendingHistory.remove(itemId);
         m_historyTotal.remove(itemId);
-        m_historyDuplicateRetries.remove(itemId);
-        m_historyLastPageOldest.remove(itemId);
         m_historyStatus->setText(
             QString::fromUtf8("История %1 загружена: %2 записей").arg(itemId).arg(fetched));
     }
 }
 
-/// Агрегирует сырые сделки по часам, пишет снимки цен и почасовую статистику в БД.
+// Группирует все полученные сделки по часам и для каждого часа считает статистику
+// (min, avg, median, max, stddev). Результат сохраняется в таблицу price_snapshots (по строке на час)
+// и обновляет hourly_stats (средняя цена по часам суток для коэффициента времени).
 void ItemManagerWidget::storeHistoryEntries(const QString& itemId, const QVector<PriceHistoryEntry>& allEntries) {
     if (allEntries.isEmpty()) return;
 
-    // Group entries by hour for aggregated snapshots
     QMap<qint64, QVector<qint64>> hourBuckets;
 
     for (const auto& entry : allEntries) {
